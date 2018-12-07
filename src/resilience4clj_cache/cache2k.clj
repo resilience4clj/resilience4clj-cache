@@ -1,8 +1,10 @@
 (ns resilience4clj-cache.cache2k
+  (:refer-clojure :exclude [load])
   (:import (org.cache2k Cache2kBuilder)
            (org.cache2k.configuration Cache2kConfiguration)
            (org.cache2k.integration CacheLoader
-                                    FunctionalCacheLoader)
+                                    FunctionalCacheLoader
+                                    AdvancedCacheLoader)
            (org.cache2k.jcache ExtendedMutableConfiguration)
 
            (java.util.concurrent TimeUnit)
@@ -12,7 +14,10 @@
 (defn loader [f]
   (reify FunctionalCacheLoader
     (load [_ k]
-      (f k))))
+      (let [data (f k)]
+        (println "will return" data "for key" k)
+        data)
+      "Juro q estou tentando")))
 
 
 (defn create
@@ -46,7 +51,7 @@
                             (.expireAfterWrite expire-after-write TimeUnit/MILLISECONDS)
 
                             loader
-                            (.loader loader)
+                            (.loader ^FunctionalCacheLoader loader)
 
                             (not (nil? refresh-ahead?))
                             (.refreshAhead refresh-ahead?)

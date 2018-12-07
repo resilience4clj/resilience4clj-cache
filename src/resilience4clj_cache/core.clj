@@ -1,9 +1,9 @@
 (ns resilience4clj-cache.core
-  (:import
-   (io.github.resilience4j.cache Cache)
-   (io.github.resilience4j.core EventConsumer) 
-   (io.vavr.control Try)
-   (java.time Duration)))
+  (:refer-clojure :exclude [load])
+  (:import (io.github.resilience4j.cache Cache)
+           (io.github.resilience4j.core EventConsumer)
+           (io.vavr.control Try)
+           (java.time Duration)))
 
 (defn ^:private anom-map
   [category msg]
@@ -88,6 +88,7 @@
       .getCacheConfig
       cache-config->config-data))
 
+;; FIXME deal with exceptions and fallback
 (defn decorate
   ([f cache-context]
    (decorate f cache-context nil))
@@ -188,100 +189,114 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 
-(def cache (.build
-            (-> (org.cache2k.Cache2kBuilder/of java.lang.String java.lang.String)
-                (.name "my-cache2")
-                (.eternal true)
-                (.entryCapacity 100))))
+(comment
+  (def cache (.build
+              (-> (org.cache2k.Cache2kBuilder/of java.lang.String java.lang.String)
+                  (.name "my-cache2")
+                  (.eternal true)
+                  (.entryCapacity 100))))
 
-(.put cache "A" "My a")
+  (.put cache "A" "My a")
 
-(.containsKey cache "A")
+  (.containsKey cache "A")
 
-(.peek cache "A")
+  (.peek cache "A")
 
-#_(org.cache2k.provider.CachingProvider
-   )
-
-
-#_(new org.cache2k.jcache.provider.JCacheAdapter
-       (new org.cache2k.jcache.provider.JCacheManagerAdapter))
+  #_(org.cache2k.provider.CachingProvider
+     )
 
 
-
-
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+  #_(new org.cache2k.jcache.provider.JCacheAdapter
+         (new org.cache2k.jcache.provider.JCacheManagerAdapter)))
 
 
 
-(def provider (javax.cache.Caching/getCachingProvider "org.cache2k.jcache.provider.JCacheProvider"))
-
-(def cm (.getCacheManager provider))
-
-(import org.cache2k.jcache.ExtendedMutableConfiguration)
-
-(def cache-proper (.createCache cm "cache-name2"
-                                (org.cache2k.jcache.ExtendedMutableConfiguration/of
-                                 (-> (org.cache2k.Cache2kBuilder/of java.lang.String java.lang.String)
-                                     (.eternal true)
-                                     (.entryCapacity 100)))))
-
-(def cache-wrapper (Cache/of cache-proper))
-
-(def decorated-callable (Cache/decorateCallable cache-wrapper (reify Callable (call [_] "Hey buddy!"))))
-
-(def result (Try/ofCallable decorated-callable))
-
-
-(.apply decorated-callable "key3")
-
-
-(.getNumberOfCacheHits (.getMetrics cache-wrapper))
-(.getNumberOfCacheMisses (.getMetrics cache-wrapper))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
-(def cache (cache2k/create "my-cache"
-                           {:key-class java.lang.String
-                            :val-class java.lang.String
-                            :eternal true
-                            :entry-capacity 100}))
 
-(def cache-context (create cache-context))
 
-(defn ext-call [n]
-  (str "Hello " n "!"))
+(comment
+  (def provider (javax.cache.Caching/getCachingProvider "org.cache2k.jcache.provider.JCacheProvider"))
 
-(def decorated-cache-call (decorate ext-call cache-context))
+  (def cm (.getCacheManager provider))
 
-(decorated-cache-call "Tiago")
+  (import org.cache2k.jcache.ExtendedMutableConfiguration)
 
-(def decorated-cache-call (decorate ext-call cache-context
-                                    {:fallback (fn [n e] "Fallback")
-                                     :cache-key (fn [n] (.hashCode n))}))
+  (def cache-proper (.createCache cm "cache-name2"
+                                  (org.cache2k.jcache.ExtendedMutableConfiguration/of
+                                   (-> (org.cache2k.Cache2kBuilder/of java.lang.String java.lang.String)
+                                       (.eternal true)
+                                       (.entryCapacity 100)))))
 
-(config cache)
-(metrics cache)
-(listen-event :cache-hit (fn [e] e))
-(listen-event :cache-miss (fn [e] e))
-(listen-event :cache-error (fn [e] e))
+  (def cache-wrapper (Cache/of cache-proper))
+
+  (def decorated-callable (Cache/decorateCallable cache-wrapper (reify Callable (call [_] "Hey buddy!"))))
+
+  (def result (Try/ofCallable decorated-callable))
+
+
+  (.apply decorated-callable "key3")
+
+
+  (.getNumberOfCacheHits (.getMetrics cache-wrapper))
+  (.getNumberOfCacheMisses (.getMetrics cache-wrapper)))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(comment
+  (def cache (cache2k/create "my-cache"
+                             {:key-class java.lang.String
+                              :val-class java.lang.String
+                              :eternal true
+                              :entry-capacity 100}))
+
+  (def cache-context (create cache-context))
+
+  (defn ext-call [n]
+    (str "Hello " n "!"))
+
+  (def decorated-cache-call (decorate ext-call cache-context))
+
+  (decorated-cache-call "Tiago")
+
+  (def decorated-cache-call (decorate ext-call cache-context
+                                      {:fallback (fn [n e] "Fallback")
+                                       :cache-key (fn [n] (.hashCode n))}))
+
+  (config cache)
+  (metrics cache)
+  (listen-event :cache-hit (fn [e] e))
+  (listen-event :cache-miss (fn [e] e))
+  (listen-event :cache-error (fn [e] e)))
 
 
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
-
+(defn ext-call [n]
+  (Thread/sleep 1000)
+  (str "Hello " n "!"))
 
 (require '[resilience4clj-cache.cache2k :as cache2k])
 
-(def cache (cache2k/create "my-cache2" {:eternal true
-                                        :entry-capacity 2}))
+(def cache (cache2k/create "my-cache16" {:eternal true
+                                         :entry-capacity 2}))
+
+(def cache2 (cache2k/create "my-cache20" {:entry-capacity 100
+                                          :refresh-ahead? true
+                                          :expire-after-write 10000
+                                          :key-class java.lang.String
+                                          :val-class java.lang.String
+                                          :suppress-exceptions? false
+                                          :loader (cache2k/loader
+                                                   (fn [n]
+                                                     (println "in the loader" n)
+                                                     "From loader"))}))
 
 (def cache-context (create cache))
 
-(defn ext-call [n]
-  (Thread/sleep 2000)
-  (str "Hello " n "!"))
+(def cache-context2 (create cache2))
 
 (defn ext-call2 [n i]
   (Thread/sleep 1000)
@@ -289,15 +304,18 @@
    :val i
    :rand (rand-int i)})
 
-(def decorated-cache-call (decorate ext-call cache-context))
+(def decorated-cache-call (decorate ext-call cache-context2
+                                    {:cache-key (fn [n]
+                                                  (println "cache key" n)
+                                                  n)}))
 
 (def decorated-cache-call2 (decorate ext-call2 cache-context))
 
-(decorated-cache-call "Tiago")
+(time (decorated-cache-call "Tiago"))
 
 (decorated-cache-call2 "Tiago" 6001)
 
 (dotimes [n 100]
   (decorated-cache-call "Tiago2"))
 
-(metrics cache-context)
+(metrics cache-context2)
