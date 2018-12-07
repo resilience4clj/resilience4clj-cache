@@ -1,8 +1,15 @@
 (ns resilience4clj-cache.core
   (:refer-clojure :exclude [load])
-  (:import (io.github.resilience4j.cache Cache)
-           (io.github.resilience4j.core EventConsumer)
-           (io.vavr.control Try)
+  (:import (javax.cache Caching)
+           (javax.cache.configuration Configuration
+                                      MutableConfiguration
+                                      MutableCacheEntryListenerConfiguration
+                                      Factory)
+           (javax.cache.event CacheEntryEventFilter
+                              CacheEntryCreatedListener
+                              CacheEntryExpiredListener
+                              CacheEntryRemovedListener
+                              CacheEntryUpdatedListener)
            (java.time Duration)))
 
 (defn ^:private anom-map
@@ -51,164 +58,68 @@
   (merge (base-event->data e)
          {:ellapsed-duration (-> e .getElapsedDuration .toNanos)}))
 
-;; informs that a call has been tried, failed and will now be retried
-(defmethod event->data :SUCCESS [e]
+(defmethod event->data :HIT [e]
   (base-event->data e))
 
-;; informs that a call has been retried, but still failed
+(defmethod event->data :MISS [e]
+  (base-event->data e))
+
 (defmethod event->data :ERROR [e]
   (base-event->data e))
 
-;; informs that a call has been tried, failed and will now be retried
-(defmethod event->data :CACHE [e]
-  (base-event->data e))
-
-;; informs that an error has been ignored
-(defmethod event->data :IGNORED_ERROR [e]
-  (base-event->data e))
-
-(defn ^:private event-consumer [f]
-  (reify EventConsumer
-    (consumeEvent [this e]
-      (println "event-consumer being called")
-      (let [data (event->data e)]
-        (f data)))))
+#_(defn ^:private event-consumer [f]
+    (reify EventConsumer
+      (consumeEvent [this e]
+        (println "event-consumer being called")
+        (let [data (event->data e)]
+          (f data)))))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Public functions
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
-(defn create
-  [cache]
-  (Cache/of cache))
+#_(defn create
+    [cache]
+    (Cache/of cache))
 
-(defn config
-  [cache]
-  (-> cache
-      .getCacheConfig
-      cache-config->config-data))
+#_(defn config
+    [cache]
+    (-> cache
+        .getCacheConfig
+        cache-config->config-data))
 
-;; FIXME deal with exceptions and fallback
-(defn decorate
-  ([f cache-context]
-   (decorate f cache-context nil))
-  ([f cache-context {:keys [cache-key] :as opts}]
-   (fn [& args]
-     (let [key-fn (or cache-key (fn [& args'] (.hashCode args')))
-           callable (reify Callable (call [_] (apply f args)))
-           decorated-callable (Cache/decorateCallable cache-context callable)
-           failure-handler (get-failure-handler opts)
-           ;;lambda (Try/ofCallable decorated-callable)
-           result (.apply decorated-callable (apply key-fn args))]
-       result
-       #_(if (.isSuccess result)
-           (.get result)
-           (let [args' (-> args vec (conj {:cause (.getCause result)}))]
-             (apply failure-handler args')))))))
+#_(defn decorate
+    ([f cache-context]
+     (decorate f cache-context nil))
+    ([f cache-context {:keys [cache-key] :as opts}]
+     (fn [& args]
+       (let [key-fn (or cache-key (fn [& args'] (.hashCode args')))
+             callable (reify Callable (call [_] (apply f args)))
+             decorated-callable (Cache/decorateCallable cache-context callable)
+             failure-handler (get-failure-handler opts)
+             ;;lambda (Try/ofCallable decorated-callable)
+             result (.apply decorated-callable (apply key-fn args))]
+         result
+         #_(if (.isSuccess result)
+             (.get result)
+             (let [args' (-> args vec (conj {:cause (.getCause result)}))]
+               (apply failure-handler args')))))))
 
-(defn metrics
-  [cache-context]
-  (let [metrics (.getMetrics cache-context)]
-    {:number-of-cache-hits (.getNumberOfCacheHits metrics)
-     :number-of-cache-misses (.getNumberOfCacheMisses metrics)}))
+#_(defn metrics
+    [cache-context]
+    (let [metrics (.getMetrics cache-context)]
+      {:number-of-cache-hits (.getNumberOfCacheHits metrics)
+       :number-of-cache-misses (.getNumberOfCacheMisses metrics)}))
 
-(defn listen-event
-  [cache event-key f]
-  (let [event-publisher (.getEventPublisher cache)
-        consumer (event-consumer f)]
-    (case event-key
-      :success (.onSuccess event-publisher consumer)
-      :error (.onError event-publisher consumer)
-      :ignored-error (.onIgnoredError event-publisher consumer)
-      :cache (.onCache event-publisher consumer))))
-
-(comment
-  (def cache (create "my-cache"))
-  (config cache)
-
-  (def cache2 (create "other-cache" {:wait-duration 1000
-                                     :max-attempts 5}))
-  (config cache2)
-
-  ;; mock for an external call
-  (defn external-call
-    ([n]
-     (external-call n nil))
-    ([n {:keys [fail? wait]}]
-     (println "calling...")
-     (when wait
-       (Thread/sleep wait))
-     (if-not fail?
-       (str "Hello " n "!")
-       (anomaly! :broken-hello "Couldn't say hello"))))
-
-  (defn random-call
-    []
-    (let [r (rand)]
-      (cond
-        (< r 0.4) "I worked!!"
-        :else (anomaly! :sorry "Sorry. No cake!"))))
-  
-  
-  (def call (decorate external-call
-                      cache2
-                      {:fallback (fn [n opts e]
-                                   (str "Fallback reply for " n))}))
-
-  (def call2 (decorate random-call
-                       cache2
-                       {:fallback (fn [e]
-                                    (str "Fallback"))}))
-  
-  (listen-event cache2 :success (fn [e] (println (dissoc e :last-throwable))))
-  (listen-event cache2 :error (fn [e] (println (dissoc e :last-throwable))))
-  (listen-event cache2 :cache (fn [e] (println (dissoc e :last-throwable))))
-  (listen-event cache2 :ignored-error (fn [e] (println (dissoc e :last-throwable))))
-
-  (call "Bla" {:fail? false})
-
-  (call2)
-
-  #_(time (call "bla" {:fail? true}))
-
-  #_(time (try
-            (call "bla" {:fail? true})
-            (catch Throwable t)))
-  (metrics cache2)
-
-
-  #_(.apply (:wait-duration (config cache))
-            (int 1))
-
-
-  (.apply (reify java.util.function.Function
-            (apply [this x]
-              (str "Hello " x)))
-          "World"))
-
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-
-
-(comment
-  (def cache (.build
-              (-> (org.cache2k.Cache2kBuilder/of java.lang.String java.lang.String)
-                  (.name "my-cache2")
-                  (.eternal true)
-                  (.entryCapacity 100))))
-
-  (.put cache "A" "My a")
-
-  (.containsKey cache "A")
-
-  (.peek cache "A")
-
-  #_(org.cache2k.provider.CachingProvider
-     )
-
-
-  #_(new org.cache2k.jcache.provider.JCacheAdapter
-         (new org.cache2k.jcache.provider.JCacheManagerAdapter)))
-
+#_(defn listen-event
+    [cache event-key f]
+    (let [event-publisher (.getEventPublisher cache)
+          consumer (event-consumer f)]
+      (case event-key
+        :success (.onSuccess event-publisher consumer)
+        :error (.onError event-publisher consumer)
+        :ignored-error (.onIgnoredError event-publisher consumer)
+        :cache (.onCache event-publisher consumer))))
 
 
 
@@ -244,78 +155,113 @@
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
+
 (comment
-  (def cache (cache2k/create "my-cache"
-                             {:key-class java.lang.String
-                              :val-class java.lang.String
-                              :eternal true
-                              :entry-capacity 100}))
-
-  (def cache-context (create cache-context))
-
   (defn ext-call [n]
+    (Thread/sleep 1000)
     (str "Hello " n "!"))
 
-  (def decorated-cache-call (decorate ext-call cache-context))
+  (require '[resilience4clj-cache.cache2k :as cache2k])
 
-  (decorated-cache-call "Tiago")
+  (def cache (cache2k/create "my-cache16" {:eternal true
+                                           :entry-capacity 2}))
 
-  (def decorated-cache-call (decorate ext-call cache-context
-                                      {:fallback (fn [n e] "Fallback")
-                                       :cache-key (fn [n] (.hashCode n))}))
+  (def cache2 (cache2k/create "my-cache20" {:entry-capacity 100
+                                            :refresh-ahead? true
+                                            :expire-after-write 10000
+                                            :key-class java.lang.String
+                                            :val-class java.lang.String
+                                            :suppress-exceptions? false
+                                            :loader (cache2k/loader
+                                                     (fn [n]
+                                                       (println "in the loader" n)
+                                                       "From loader"))}))
 
-  (config cache)
-  (metrics cache)
-  (listen-event :cache-hit (fn [e] e))
-  (listen-event :cache-miss (fn [e] e))
-  (listen-event :cache-error (fn [e] e)))
+  (def cache-context (create cache))
+
+  (def cache-context2 (create cache2))
+
+  (defn ext-call2 [n i]
+    (Thread/sleep 1000)
+    {:name n
+     :val i
+     :rand (rand-int i)})
+
+  (def decorated-cache-call (decorate ext-call cache-context2
+                                      {:cache-key (fn [n]
+                                                    (println "cache key" n)
+                                                    n)}))
+
+  (def decorated-cache-call2 (decorate ext-call2 cache-context))
+
+  (time (decorated-cache-call "Tiago"))
+
+  (decorated-cache-call2 "Tiago" 6001)
+
+  (dotimes [n 100]
+    (decorated-cache-call "Tiago2"))
+
+  (metrics cache-context2))
 
 
 
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
-(defn ext-call [n]
-  (Thread/sleep 1000)
-  (str "Hello " n "!"))
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
-(require '[resilience4clj-cache.cache2k :as cache2k])
 
-(def cache (cache2k/create "my-cache16" {:eternal true
-                                         :entry-capacity 2}))
+(def provider (Caching/getCachingProvider))
 
-(def cache2 (cache2k/create "my-cache20" {:entry-capacity 100
-                                          :refresh-ahead? true
-                                          :expire-after-write 10000
-                                          :key-class java.lang.String
-                                          :val-class java.lang.String
-                                          :suppress-exceptions? false
-                                          :loader (cache2k/loader
-                                                   (fn [n]
-                                                     (println "in the loader" n)
-                                                     "From loader"))}))
+(def manager (.getCacheManager provider))
 
-(def cache-context (create cache))
 
-(def cache-context2 (create cache2))
+(def listener-factory (reify Factory
+                        (create [_]
+                          (reify CacheEntryCreatedListener
+                            (onCreated [_ e]
+                              (-> e
+                                  clojure.reflect/reflect
+                                  clojure.pprint/pprint))))))
 
-(defn ext-call2 [n i]
-  (Thread/sleep 1000)
-  {:name n
-   :val i
-   :rand (rand-int i)})
+(def filter-factory nil #_(reify Factory
+                            (create [_]
+                              (reify CacheEntryEventFilter
+                                (evaluate [_ e]
+                                  true)))))
 
-(def decorated-cache-call (decorate ext-call cache-context2
-                                    {:cache-key (fn [n]
-                                                  (println "cache key" n)
-                                                  n)}))
+(def old-value-required? true)
 
-(def decorated-cache-call2 (decorate ext-call2 cache-context))
+(def synchronous? false)
 
-(time (decorated-cache-call "Tiago"))
+(def listener-config (MutableCacheEntryListenerConfiguration.
+                      ^Factory listener-factory
+                      ^Factory filter-factory
+                      old-value-required?
+                      synchronous?))
 
-(decorated-cache-call2 "Tiago" 6001)
+(def config (-> (MutableConfiguration.)
+                (.addCacheEntryListenerConfiguration listener-config)))
 
-(dotimes [n 100]
-  (decorated-cache-call "Tiago2"))
+(.destroyCache manager "cache-name")
 
-(metrics cache-context2)
+(def cache (.createCache manager "cache-name"
+                         config))
+
+(.containsKey cache "a")
+
+(.put cache "a" {:a 1})
+
+(.get cache "a")
+
+#_(.getName cache)
+
+
+
+
+(comment
+  (def cache (create "cache-name" {:entry-capacity 100
+                                   :expire-after-write 10000}))
+
+  (def dec-call (decorate ext-call cache
+                          {:refresh-ahead? true}))
+
+  (dec-call "Tiago"))
