@@ -78,13 +78,9 @@
 ;; Public functions
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
-#_(defn create
-    ([n]
-     (create n nil))
-    ([n opts]
-     (if opts
-       (Cache/of n (config-data->cache-config opts))
-       (Cache/ofDefaults n))))
+(defn create
+  [cache]
+  (Cache/of cache))
 
 (defn config
   [cache]
@@ -93,37 +89,27 @@
       cache-config->config-data))
 
 (defn decorate
-  ([f cache]
-   (decorate f cache nil))
-  ([f cache opts]
+  ([f cache-context]
+   (decorate f cache-context nil))
+  ([f cache-context {:keys [cache-key] :as opts}]
    (fn [& args]
-     (let [callable (reify Callable (call [_] (apply f args)))
-           decorated-callable (Cache/decorateCallable cache callable)
+     (let [key-fn (or cache-key (fn [& args'] (.hashCode args')))
+           callable (reify Callable (call [_] (apply f args)))
+           decorated-callable (Cache/decorateCallable cache-context callable)
            failure-handler (get-failure-handler opts)
-           result (Try/ofCallable decorated-callable)]
-       (if (.isSuccess result)
-         (.get result)
-         (let [args' (-> args vec (conj {:cause (.getCause result)}))]
-           (apply failure-handler args')))))))
+           ;;lambda (Try/ofCallable decorated-callable)
+           result (.apply decorated-callable (apply key-fn args))]
+       result
+       #_(if (.isSuccess result)
+           (.get result)
+           (let [args' (-> args vec (conj {:cause (.getCause result)}))]
+             (apply failure-handler args')))))))
 
 (defn metrics
-  [cache]
-  (let [metrics (.getMetrics cache)]
-    {;; the number of successful calls without a cache attempt
-     :number-of-successful-calls-without-cache-attempt
-     (.getNumberOfSuccessfulCallsWithoutCacheAttempt metrics)
-
-     ;; the number of failed calls without a cache attempt
-     :number-of-failed-calls-without-cache-attempt
-     (.getNumberOfFailedCallsWithoutCacheAttempt metrics)
-
-     ;; the number of successful calls after a cache attempt
-     :number-of-successful-calls-with-cache-attempt
-     (.getNumberOfSuccessfulCallsWithCacheAttempt metrics)
-
-     ;; the number of failed calls after all cache attempts
-     :number-of-failed-calls-with-cache-attempt
-     (.getNumberOfFailedCallsWithCacheAttempt metrics)}))
+  [cache-context]
+  (let [metrics (.getMetrics cache-context)]
+    {:number-of-cache-hits (.getNumberOfCacheHits metrics)
+     :number-of-cache-misses (.getNumberOfCacheMisses metrics)}))
 
 (defn listen-event
   [cache event-key f]
@@ -279,3 +265,39 @@
 (listen-event :cache-hit (fn [e] e))
 (listen-event :cache-miss (fn [e] e))
 (listen-event :cache-error (fn [e] e))
+
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+
+
+(require '[resilience4clj-cache.cache2k :as cache2k])
+
+(def cache (cache2k/create "my-cache2" {:eternal true
+                                        :entry-capacity 2}))
+
+(def cache-context (create cache))
+
+(defn ext-call [n]
+  (Thread/sleep 2000)
+  (str "Hello " n "!"))
+
+(defn ext-call2 [n i]
+  (Thread/sleep 1000)
+  {:name n
+   :val i
+   :rand (rand-int i)})
+
+(def decorated-cache-call (decorate ext-call cache-context))
+
+(def decorated-cache-call2 (decorate ext-call2 cache-context))
+
+(decorated-cache-call "Tiago")
+
+(decorated-cache-call2 "Tiago" 6001)
+
+(dotimes [n 100]
+  (decorated-cache-call "Tiago2"))
+
+(metrics cache-context)
