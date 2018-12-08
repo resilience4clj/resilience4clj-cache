@@ -353,6 +353,7 @@
     (Caching/getCachingProvider caching-provider)
     (Caching/getCachingProvider)))
 
+;; FIXME reconsider whether making eternal? by default is a good idea
 (defn ^:private get-expiry-policy
   [{:keys [expire-after eternal?]}]
   (println "aqui" expire-after eternal?)
@@ -411,6 +412,8 @@
       :cache (.createCache manager n config)})))
 
 ;; FIXME trigger events
+;; FIXME refresh-ahead-count
+;; FIXME prefetch
 (defn decorate
   ([f cache]
    (decorate f cache nil))
