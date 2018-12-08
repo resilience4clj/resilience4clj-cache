@@ -1,16 +1,29 @@
 (ns resilience4clj-cache.core
   (:refer-clojure :exclude [load])
   (:import (javax.cache Caching)
+           
            (javax.cache.configuration Configuration
                                       MutableConfiguration
                                       MutableCacheEntryListenerConfiguration
+                                      CompleteConfiguration
                                       Factory)
+           
            (javax.cache.event CacheEntryEventFilter
+                              CacheEntryListener
                               CacheEntryCreatedListener
                               CacheEntryExpiredListener
                               CacheEntryRemovedListener
                               CacheEntryUpdatedListener)
-           (java.time Duration)))
+           
+           (javax.cache.expiry ExpiryPolicy
+                               AccessedExpiryPolicy
+                               CreatedExpiryPolicy
+                               EternalExpiryPolicy
+                               ModifiedExpiryPolicy
+                               TouchedExpiryPolicy
+                               Duration)
+
+           (java.util.concurrent TimeUnit)))
 
 (defn ^:private anom-map
   [category msg]
@@ -208,60 +221,249 @@
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
+;; events:
+;; :hit
+;; :miss
+;; :error
+
+;; is in cache? then hit++,  get -> out -> event hit
+;; is not in cache? then miss++, fetch, put -> out -> event miss
+;; if errored error++ -> event error
+
+;; :created ->
+;; :updated
+;; :removed
+;; :expired -> if refresh-ahead then
+
+;; metrics
+;; number-of-cache-hits
+;; mumber-of-cache-misses
+;; number-of-errors
+;; should???:
+;; number-of-created
+;; number-of-updated
+;; number-of-removed
+;; number-of-expired
+
 
 (def provider (Caching/getCachingProvider))
 
 (def manager (.getCacheManager provider))
 
 
-(def listener-factory (reify Factory
-                        (create [_]
-                          (reify CacheEntryCreatedListener
-                            (onCreated [_ e]
-                              (-> e
-                                  clojure.reflect/reflect
-                                  clojure.pprint/pprint))))))
+(def created-listener-factory (reify Factory
+                                (create [_]
+                                  (reify CacheEntryCreatedListener
+                                    (onCreated [_ e]
+                                      (println "created event called")
+                                      #_(-> e
+                                            clojure.reflect/reflect
+                                            clojure.pprint/pprint))))))
 
-(def filter-factory nil #_(reify Factory
-                            (create [_]
-                              (reify CacheEntryEventFilter
-                                (evaluate [_ e]
-                                  true)))))
+(def expired-listener-factory (reify Factory
+                                (create [_]
+                                  (reify CacheEntryExpiredListener
+                                    (onExpired [_ e]
+                                      (println "expired event called")
+                                      #_(-> e
+                                            clojure.reflect/reflect
+                                            clojure.pprint/pprint))))))
+
+(def removed-listener-factory (reify Factory
+                                (create [_]
+                                  (reify CacheEntryRemovedListener
+                                    (onRemoved [_ e]
+                                      (println "removed event called")
+                                      #_(-> e
+                                            clojure.reflect/reflect
+                                            clojure.pprint/pprint))))))
+
+(def updated-listener-factory (reify Factory
+                                (create [_]
+                                  (reify CacheEntryUpdatedListener
+                                    (onUpdated [_ e]
+                                      (println "updated event called")
+                                      #_(-> e
+                                            clojure.reflect/reflect
+                                            clojure.pprint/pprint))))))
+
 
 (def old-value-required? true)
 
 (def synchronous? false)
 
-(def listener-config (MutableCacheEntryListenerConfiguration.
-                      ^Factory listener-factory
-                      ^Factory filter-factory
-                      old-value-required?
-                      synchronous?))
+(def created-listener-config (MutableCacheEntryListenerConfiguration.
+                              ^Factory created-listener-factory
+                              nil
+                              old-value-required?
+                              synchronous?))
+
+(def expired-listener-config (MutableCacheEntryListenerConfiguration.
+                              ^Factory expired-listener-factory
+                              nil
+                              old-value-required?
+                              synchronous?))
+
+(def removed-listener-config (MutableCacheEntryListenerConfiguration.
+                              ^Factory removed-listener-factory
+                              nil
+                              old-value-required?
+                              synchronous?))
+
+(def updated-listener-config (MutableCacheEntryListenerConfiguration.
+                              ^Factory updated-listener-factory
+                              nil
+                              old-value-required?
+                              synchronous?))
+
+(def expiry-policy-factory (reify Factory
+                             (create [_]
+                               (ModifiedExpiryPolicy. (Duration. TimeUnit/SECONDS 60)))))
 
 (def config (-> (MutableConfiguration.)
-                (.addCacheEntryListenerConfiguration listener-config)))
+                (.addCacheEntryListenerConfiguration created-listener-config)
+                (.addCacheEntryListenerConfiguration expired-listener-config)
+                (.addCacheEntryListenerConfiguration removed-listener-config)
+                (.addCacheEntryListenerConfiguration updated-listener-config)
+                (.setTypes java.lang.Object java.lang.Object)
+                (.setExpiryPolicyFactory expiry-policy-factory)))
 
 (.destroyCache manager "cache-name")
 
 (def cache (.createCache manager "cache-name"
                          config))
 
-(.containsKey cache "a")
+(.containsKey cache 1)
 
-(.put cache "a" {:a 1})
+(.put cache 1 {:a 1})
 
-(.get cache "a")
+(.get cache 1)
+
+(.remove cache 1)
 
 #_(.getName cache)
 
+(defn ^:private assert-anomaly!
+  [assertion? category msg]
+  (when (not assertion?) (anomaly! category msg)))
+
+(defn ^:private get-caching-provider
+  [{:keys [caching-provider]}]
+  (if caching-provider
+    (Caching/getCachingProvider caching-provider)
+    (Caching/getCachingProvider)))
+
+(defn ^:private get-expiry-policy
+  [{:keys [expire-after eternal?]}]
+  (println "aqui" expire-after eternal?)
+  (when expire-after
+    (assert-anomaly! (> expire-after 1000)
+                     :invalid-expire-after
+                     ":expire-after must be at least 1000"))
+  (let [expire-after' (or expire-after 60000)]
+    (if (or eternal? (and (nil? eternal?) (nil? expire-after)))
+      (reify Factory
+        (create [_]
+          (EternalExpiryPolicy.)))
+      (reify Factory
+        (create [_]
+          (ModifiedExpiryPolicy. (Duration. TimeUnit/MILLISECONDS
+                                            expire-after')))))))
+
+(defn ^:private get-expired-listener
+  []
+  (reify Factory
+    (create [_]
+      (reify CacheEntryExpiredListener
+        (onExpired [_ e]
+          (println "expired event called")
+          #_(-> e
+                clojure.reflect/reflect
+                clojure.pprint/pprint))))))
 
 
+(defn ^:private build-expired-listener-config
+  []
+  (let [old-value-required? false
+        synchronous? false]
+    (MutableCacheEntryListenerConfiguration. ^Factory (get-expired-listener)
+                                             nil ;; listener filter not needed
+                                             old-value-required?
+                                             synchronous?)))
+
+(defn ^:private build-config
+  [{:keys [] :as opts}]
+  (-> (MutableConfiguration.)
+      (.addCacheEntryListenerConfiguration (build-expired-listener-config))
+      (.setTypes java.lang.Object java.lang.Object)
+      (.setExpiryPolicyFactory (get-expiry-policy opts))))
+
+
+(defn create
+  ([n]
+   (create n nil))
+  ([n opts]
+   (let [provider (get-caching-provider opts)
+         manager (.getCacheManager provider)
+         config (build-config opts)]
+     (.destroyCache manager n)
+     {:metrics (atom {:hits 0 :misses 0 :errors 0})
+      :cache (.createCache manager n config)})))
+
+;; FIXME trigger events
+(defn decorate
+  ([f cache]
+   (decorate f cache nil))
+  ([f {:keys [cache metrics] :as c} {:keys [fallback refresh-ahead-count] :as opts}]
+   (fn [& args]
+     (try
+       (if (.containsKey cache args)
+         (do
+           (swap! metrics update :hits inc)
+           (.get cache args))
+         (do
+           (let [out (apply f args)]
+             (swap! metrics update :misses inc)
+             (.put cache args out)
+             out)))
+       ;;FIXME deal with fallback
+       (catch Throwable t
+         (swap! metrics update :errors inc)
+         (throw t))))))
+
+;;FIXME: for some reason this does not work despite the fact it should
+(defn config
+  [{:keys [cache]}]
+  (let [cfg (.getConfiguration cache CompleteConfiguration)
+        expiry-policy (-> cfg
+                          .getExpiryPolicyFactory
+                          .create)]
+    (println "in the config" (type expiry-policy))
+    (if (instance? EternalExpiryPolicy expiry-policy)
+      {:eternal? true}
+      {:expire-after (-> expiry-policy
+                         .getExpiryForUpdate
+                         .getDurationAmount)})))
+
+(defn metrics
+  [{:keys [metrics]}]
+  (deref metrics))
 
 (comment
-  (def cache (create "cache-name" {:entry-capacity 100
-                                   :expire-after-write 10000}))
 
-  (def dec-call (decorate ext-call cache
-                          {:refresh-ahead? true}))
+  (defn ext-call [n]
+    (Thread/sleep 1000)
+    (str "Hello " n "!"))
+  
+  (def cache (create "cache-name" {:expire-after 5000}))
 
-  (dec-call "Tiago"))
+  (def dec-call (decorate ext-call cache))
+
+  (dec-call "Tiago")
+
+  (dotimes [n 100]
+    (dec-call "Bla"))
+  
+  (metrics cache)
+
+  )
