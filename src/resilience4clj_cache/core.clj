@@ -358,7 +358,7 @@
   [{:keys [expire-after eternal?]}]
   (println "aqui" expire-after eternal?)
   (when expire-after
-    (assert-anomaly! (> expire-after 1000)
+    (assert-anomaly! (>= expire-after 1000)
                      :invalid-expire-after
                      ":expire-after must be at least 1000"))
   (let [expire-after' (or expire-after 60000)]
@@ -409,7 +409,21 @@
          config (build-config opts)]
      (.destroyCache manager n)
      {:metrics (atom {:hits 0 :misses 0 :errors 0})
-      :cache (.createCache manager n config)})))
+      :cache (.createCache manager n config)
+      :config config})))
+
+;;FIXME: for some reason this does not work despite the fact it should
+(defn config
+  [{:keys [config]}]
+  (let [expiry-policy (-> config
+                          .getExpiryPolicyFactory
+                          .create)]
+    (println "in the config" (type expiry-policy))
+    (if (instance? EternalExpiryPolicy expiry-policy)
+      {:eternal? true}
+      {:expire-after (-> expiry-policy
+                         .getExpiryForUpdate
+                         .getDurationAmount)})))
 
 ;; FIXME trigger events
 ;; FIXME refresh-ahead-count
@@ -434,19 +448,7 @@
          (swap! metrics update :errors inc)
          (throw t))))))
 
-;;FIXME: for some reason this does not work despite the fact it should
-(defn config
-  [{:keys [cache]}]
-  (let [cfg (.getConfiguration cache CompleteConfiguration)
-        expiry-policy (-> cfg
-                          .getExpiryPolicyFactory
-                          .create)]
-    (println "in the config" (type expiry-policy))
-    (if (instance? EternalExpiryPolicy expiry-policy)
-      {:eternal? true}
-      {:expire-after (-> expiry-policy
-                         .getExpiryForUpdate
-                         .getDurationAmount)})))
+
 
 (defn metrics
   [{:keys [metrics]}]
