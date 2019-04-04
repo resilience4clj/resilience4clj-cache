@@ -41,100 +41,12 @@
     (fn [& args] (apply fallback args))
     (fn [& args] (throw (-> args last :cause)))))
 
-;; FIXME: manage cacheOnException and/or cacheOnResult (they are confusing in the docs)
-#_(defn ^:private config-data->cache-config
-    [{:keys [max-attempts wait-duration interval-function]}]
-    (.build
-     (cond-> (CacheConfig/custom)
-       max-attempts  (.maxAttempts max-attempts)
-       wait-duration (.waitDuration (Duration/ofMillis wait-duration))
-       interval-function (.intervalFunction interval-function))))
-
-;; FIXME: cache config does not expose wait duration directly - this is wrong
-(defn ^:private cache-config->config-data
-  [cache-config]
-  {:max-attempts  (.getMaxAttempts cache-config)
-   :interval-function (.getIntervalFunction cache-config)})
-
-(defmulti ^:private event->data
-  (fn [e]
-    (-> e .getEventType .toString keyword)))
-
-(defn ^:private base-event->data [e]
-  {:event-type (-> e .getEventType .toString keyword)
-   :cache-name (.getName e)
-   :number-of-cache-attempts (.getNumberOfCacheAttempts e)
-   :creation-time (.getCreationTime e)
-   :last-throwable (.getLastThrowable e)})
-
-(defn ^:private ellapsed-event->data [e]
-  (merge (base-event->data e)
-         {:ellapsed-duration (-> e .getElapsedDuration .toNanos)}))
-
-(defmethod event->data :HIT [e]
-  (base-event->data e))
-
-(defmethod event->data :MISS [e]
-  (base-event->data e))
-
-(defmethod event->data :ERROR [e]
-  (base-event->data e))
-
-#_(defn ^:private event-consumer [f]
-    (reify EventConsumer
-      (consumeEvent [this e]
-        (println "event-consumer being called")
-        (let [data (event->data e)]
-          (f data)))))
-
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Public functions
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
-#_(defn create
-    [cache]
-    (Cache/of cache))
 
-#_(defn config
-    [cache]
-    (-> cache
-        .getCacheConfig
-        cache-config->config-data))
-
-#_(defn decorate
-    ([f cache-context]
-     (decorate f cache-context nil))
-    ([f cache-context {:keys [cache-key] :as opts}]
-     (fn [& args]
-       (let [key-fn (or cache-key (fn [& args'] (.hashCode args')))
-             callable (reify Callable (call [_] (apply f args)))
-             decorated-callable (Cache/decorateCallable cache-context callable)
-             failure-handler (get-failure-handler opts)
-             ;;lambda (Try/ofCallable decorated-callable)
-             result (.apply decorated-callable (apply key-fn args))]
-         result
-         #_(if (.isSuccess result)
-             (.get result)
-             (let [args' (-> args vec (conj {:cause (.getCause result)}))]
-               (apply failure-handler args')))))))
-
-#_(defn metrics
-    [cache-context]
-    (let [metrics (.getMetrics cache-context)]
-      {:number-of-cache-hits (.getNumberOfCacheHits metrics)
-       :number-of-cache-misses (.getNumberOfCacheMisses metrics)}))
-
-#_(defn listen-event
-    [cache event-key f]
-    (let [event-publisher (.getEventPublisher cache)
-          consumer (event-consumer f)]
-      (case event-key
-        :success (.onSuccess event-publisher consumer)
-        :error (.onError event-publisher consumer)
-        :ignored-error (.onIgnoredError event-publisher consumer)
-        :cache (.onCache event-publisher consumer))))
-
-
+;; TBD: here
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
@@ -246,102 +158,108 @@
 ;; number-of-expired
 
 
-(def provider (Caching/getCachingProvider))
+(comment
+  (def provider (Caching/getCachingProvider))
 
-(def manager (.getCacheManager provider))
-
-
-(def created-listener-factory (reify Factory
-                                (create [_]
-                                  (reify CacheEntryCreatedListener
-                                    (onCreated [_ e]
-                                      (println "created event called")
-                                      #_(-> e
-                                            clojure.reflect/reflect
-                                            clojure.pprint/pprint))))))
-
-(def expired-listener-factory (reify Factory
-                                (create [_]
-                                  (reify CacheEntryExpiredListener
-                                    (onExpired [_ e]
-                                      (println "expired event called")
-                                      #_(-> e
-                                            clojure.reflect/reflect
-                                            clojure.pprint/pprint))))))
-
-(def removed-listener-factory (reify Factory
-                                (create [_]
-                                  (reify CacheEntryRemovedListener
-                                    (onRemoved [_ e]
-                                      (println "removed event called")
-                                      #_(-> e
-                                            clojure.reflect/reflect
-                                            clojure.pprint/pprint))))))
-
-(def updated-listener-factory (reify Factory
-                                (create [_]
-                                  (reify CacheEntryUpdatedListener
-                                    (onUpdated [_ e]
-                                      (println "updated event called")
-                                      #_(-> e
-                                            clojure.reflect/reflect
-                                            clojure.pprint/pprint))))))
+  (def manager (.getCacheManager provider))
 
 
-(def old-value-required? true)
+  (def created-listener-factory (reify Factory
+                                  (create [_]
+                                    (reify CacheEntryCreatedListener
+                                      (onCreated [_ e]
+                                        (println "created event called")
+                                        #_(-> e
+                                              clojure.reflect/reflect
+                                              clojure.pprint/pprint))))))
 
-(def synchronous? false)
+  (def expired-listener-factory (reify Factory
+                                  (create [_]
+                                    (reify CacheEntryExpiredListener
+                                      (onExpired [_ e]
+                                        (println "expired event called")
+                                        #_(-> e
+                                              clojure.reflect/reflect
+                                              clojure.pprint/pprint))))))
 
-(def created-listener-config (MutableCacheEntryListenerConfiguration.
-                              ^Factory created-listener-factory
-                              nil
-                              old-value-required?
-                              synchronous?))
+  (def removed-listener-factory (reify Factory
+                                  (create [_]
+                                    (reify CacheEntryRemovedListener
+                                      (onRemoved [_ e]
+                                        (println "removed event called")
+                                        #_(-> e
+                                              clojure.reflect/reflect
+                                              clojure.pprint/pprint))))))
 
-(def expired-listener-config (MutableCacheEntryListenerConfiguration.
-                              ^Factory expired-listener-factory
-                              nil
-                              old-value-required?
-                              synchronous?))
+  (def updated-listener-factory (reify Factory
+                                  (create [_]
+                                    (reify CacheEntryUpdatedListener
+                                      (onUpdated [_ e]
+                                        (println "updated event called")
+                                        #_(-> e
+                                              clojure.reflect/reflect
+                                              clojure.pprint/pprint))))))
 
-(def removed-listener-config (MutableCacheEntryListenerConfiguration.
-                              ^Factory removed-listener-factory
-                              nil
-                              old-value-required?
-                              synchronous?))
 
-(def updated-listener-config (MutableCacheEntryListenerConfiguration.
-                              ^Factory updated-listener-factory
-                              nil
-                              old-value-required?
-                              synchronous?))
+  (def old-value-required? true)
 
-(def expiry-policy-factory (reify Factory
-                             (create [_]
-                               (ModifiedExpiryPolicy. (Duration. TimeUnit/SECONDS 60)))))
+  (def synchronous? false)
 
-(def config (-> (MutableConfiguration.)
-                (.addCacheEntryListenerConfiguration created-listener-config)
-                (.addCacheEntryListenerConfiguration expired-listener-config)
-                (.addCacheEntryListenerConfiguration removed-listener-config)
-                (.addCacheEntryListenerConfiguration updated-listener-config)
-                (.setTypes java.lang.Object java.lang.Object)
-                (.setExpiryPolicyFactory expiry-policy-factory)))
+  (def created-listener-config (MutableCacheEntryListenerConfiguration.
+                                ^Factory created-listener-factory
+                                nil
+                                old-value-required?
+                                synchronous?))
 
-(.destroyCache manager "cache-name")
+  (def expired-listener-config (MutableCacheEntryListenerConfiguration.
+                                ^Factory expired-listener-factory
+                                nil
+                                old-value-required?
+                                synchronous?))
 
-(def cache (.createCache manager "cache-name"
-                         config))
+  (def removed-listener-config (MutableCacheEntryListenerConfiguration.
+                                ^Factory removed-listener-factory
+                                nil
+                                old-value-required?
+                                synchronous?))
 
-(.containsKey cache 1)
+  (def updated-listener-config (MutableCacheEntryListenerConfiguration.
+                                ^Factory updated-listener-factory
+                                nil
+                                old-value-required?
+                                synchronous?))
 
-(.put cache 1 {:a 1})
+  (def expiry-policy-factory (reify Factory
+                               (create [_]
+                                 (ModifiedExpiryPolicy. (Duration. TimeUnit/SECONDS 60)))))
 
-(.get cache 1)
+  (def config (-> (MutableConfiguration.)
+                  (.addCacheEntryListenerConfiguration created-listener-config)
+                  (.addCacheEntryListenerConfiguration expired-listener-config)
+                  (.addCacheEntryListenerConfiguration removed-listener-config)
+                  (.addCacheEntryListenerConfiguration updated-listener-config)
+                  (.setTypes java.lang.Object java.lang.Object)
+                  (.setExpiryPolicyFactory expiry-policy-factory)))
 
-(.remove cache 1)
+  (.destroyCache manager "cache-name")
 
-#_(.getName cache)
+  (def cache (.createCache manager "cache-name"
+                           config))
+
+  (.containsKey cache 1)
+
+  (.put cache 1 {:a 1})
+
+  (.get cache 1)
+
+  (.remove cache 1)
+
+  #_(.getName cache))
+
+
+
+
+
 
 (defn ^:private assert-anomaly!
   [assertion? category msg]
@@ -356,7 +274,6 @@
 ;; FIXME reconsider whether making eternal? by default is a good idea
 (defn ^:private get-expiry-policy
   [{:keys [expire-after eternal?]}]
-  (println "aqui" expire-after eternal?)
   (when expire-after
     (assert-anomaly! (>= expire-after 1000)
                      :invalid-expire-after
@@ -371,23 +288,37 @@
           (ModifiedExpiryPolicy. (Duration. TimeUnit/MILLISECONDS
                                             expire-after')))))))
 
+(defn ^:private expired-event->data [e]
+  {:event-type :EXPIRED
+   :cache-name (-> e .getSource .getName)
+   :key (.getKey e)
+   :creation-time (java.time.LocalDateTime/now)})
+
+(defn ^:private trigger-event
+  ([c evt-type k]
+   (trigger-event c evt-type k nil))
+  ([{:keys [cache listeners]} evt-type k opts]
+   (let [evt-data (merge {:event-type evt-type
+                          :cache-name (.getName cache)
+                          :key k
+                          :creation-time (java.time.LocalDateTime/now)}
+                         opts)]
+     (doseq [f (get @listeners evt-type)]
+       (f evt-data)))))
+
 (defn ^:private get-expired-listener
-  []
+  [f]
   (reify Factory
     (create [_]
       (reify CacheEntryExpiredListener
         (onExpired [_ e]
-          (println "expired event called")
-          #_(-> e
-                clojure.reflect/reflect
-                clojure.pprint/pprint))))))
-
+          (f (expired-event->data e)))))))
 
 (defn ^:private build-expired-listener-config
-  []
+  [f]
   (let [old-value-required? false
         synchronous? false]
-    (MutableCacheEntryListenerConfiguration. ^Factory (get-expired-listener)
+    (MutableCacheEntryListenerConfiguration. ^Factory (get-expired-listener f)
                                              nil ;; listener filter not needed
                                              old-value-required?
                                              synchronous?)))
@@ -395,7 +326,7 @@
 (defn ^:private build-config
   [{:keys [] :as opts}]
   (-> (MutableConfiguration.)
-      (.addCacheEntryListenerConfiguration (build-expired-listener-config))
+      #_(.addCacheEntryListenerConfiguration (build-expired-listener-config))
       (.setTypes java.lang.Object java.lang.Object)
       (.setExpiryPolicyFactory (get-expiry-policy opts))))
 
@@ -409,43 +340,45 @@
          config (build-config opts)]
      (.destroyCache manager n)
      {:metrics (atom {:hits 0 :misses 0 :errors 0})
+      :listeners (atom {})
       :cache (.createCache manager n config)
       :config config})))
 
-;;FIXME: for some reason this does not work despite the fact it should
 (defn config
   [{:keys [config]}]
   (let [expiry-policy (-> config
                           .getExpiryPolicyFactory
                           .create)]
-    (println "in the config" (type expiry-policy))
     (if (instance? EternalExpiryPolicy expiry-policy)
       {:eternal? true}
       {:expire-after (-> expiry-policy
                          .getExpiryForUpdate
                          .getDurationAmount)})))
 
+
+
 ;; FIXME trigger events
-;; FIXME refresh-ahead-count
-;; FIXME prefetch
 (defn decorate
   ([f cache]
    (decorate f cache nil))
-  ([f {:keys [cache metrics] :as c} {:keys [fallback refresh-ahead-count] :as opts}]
+  ([f {:keys [cache metrics] :as c} {:keys [fallback] :as opts}]
    (fn [& args]
      (try
        (if (.containsKey cache args)
          (do
            (swap! metrics update :hits inc)
-           (.get cache args))
+           (.get cache args)
+           (trigger-event c :HIT args))
          (do
            (let [out (apply f args)]
              (swap! metrics update :misses inc)
              (.put cache args out)
+             (trigger-event c :MISSED args)
              out)))
        ;;FIXME deal with fallback
        (catch Throwable t
          (swap! metrics update :errors inc)
+         (trigger-event c :ERROR args {:cause t})
          (throw t))))))
 
 
@@ -454,7 +387,27 @@
   [{:keys [metrics]}]
   (deref metrics))
 
-(comment
+;; TBD test
+(defn reset
+  [cache]
+  (update cache :metrics (atom {:hits 0 :misses 0 :errors 0})))
+
+;; TBD validate event-keys
+;; :EXPIRED
+
+;; :HIT
+;; :MISSED
+
+;; :ERROR
+(defn listen-event
+  [{:keys [listeners cache]} event-key f]
+  (let [coll (get listeners event-key)]
+    (if (= :EXPIRED event-key)
+      (-> cache
+          (.registerCacheEntryListener (build-expired-listener-config f)))
+      (swap! listeners assoc event-key (conj coll f)))))
+
+(do
 
   (defn ext-call [n]
     (Thread/sleep 1000)
@@ -464,9 +417,24 @@
 
   (def dec-call (decorate ext-call cache))
 
-  (dec-call "Tiago")
+  (listen-event cache :EXPIRED
+                (fn [evt]
+                  (println ":EXPIRED bwing called")
+                  (println evt)))
 
-  (dotimes [n 100]
+  (listen-event cache :HIT
+                (fn [evt]
+                  (println ":HIT being called")
+                  (println evt)))
+
+  (listen-event cache :MISSED
+                (fn [evt]
+                  (println ":MISSED being called")
+                  (println evt)))
+
+  (dec-call "Tiago")
+  
+  (dotimes [n 5]
     (dec-call "Bla"))
   
   (metrics cache)
