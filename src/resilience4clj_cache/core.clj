@@ -132,7 +132,7 @@
 (defn decorate
   ([f cache]
    (decorate f cache nil))
-  ([f {:keys [cache metrics] :as c} {:keys [fallback] :as opts}]
+  ([f {:keys [cache metrics] :as c} opts]
    (fn [& args]
      (try
        (if (.containsKey cache args)
@@ -146,11 +146,13 @@
              (.put cache args out)
              (trigger-event c :MISSED args)
              out)))
-       ;;FIXME deal with fallback
        (catch Throwable t
          (swap! metrics update :errors inc)
+         (.remove cache args)
          (trigger-event c :ERROR args {:cause t})
-         (throw t))))))
+         (let [failure-handler (get-failure-handler opts)
+               args' (-> args vec (conj {:cause t}))]
+           (apply failure-handler args')))))))
 
 (defn metrics
   [{:keys [metrics]}]
@@ -178,25 +180,44 @@
   (defn ext-call [n]
     (Thread/sleep 1000)
     (str "Hello " n "!"))
+
+  (defn fail-hello [n]
+    (throw (ex-info "Hello failed :(" {:here :extra-data})))
+
+  (defn conditional-hello
+    ([n]
+     (conditional-hello n nil))
+    ([n {:keys [fail?]}]
+     (Thread/sleep 1000)
+     (if fail?
+       (throw (ex-info "Hello failed :(" {:here :extra-data}))
+       (str "Hello " n "!"))))
   
   (def cache (create "cache-name" {:expire-after 5000}))
 
   (def dec-call (decorate ext-call cache))
 
-  (listen-event cache :EXPIRED
-                (fn [evt]
-                  (println ":EXPIRED being called")
-                  (println evt)))
+  (def protected (decorate fail-hello cache))
 
-  (listen-event cache :HIT
-                (fn [evt]
-                  (println ":HIT being called")
-                  (println evt)))
+  (def protected-fallback (decorate fail-hello
+                                    cache
+                                    {:fallback (fn [n e]
+                                                 (str "Failed with " e " for " n))}))
+  
+  #_(listen-event cache :EXPIRED
+                  (fn [evt]
+                    (println ":EXPIRED being called")
+                    (println evt)))
 
-  (listen-event cache :MISSED
-                (fn [evt]
-                  (println ":MISSED being called")
-                  (println evt)))
+  #_(listen-event cache :HIT
+                  (fn [evt]
+                    (println ":HIT being called")
+                    (println evt)))
+
+  #_(listen-event cache :MISSED
+                  (fn [evt]
+                    (println ":MISSED being called")
+                    (println evt)))
 
   (dec-call "Tiago")
   
@@ -205,4 +226,17 @@
   
   (metrics cache)
 
+
+  ;; these tests don work because the cache invalidation happens at the
+  ;; level of the collection of parameters
+  
+  (def eternal-cache (create "eternal"))
+
+  (def prot-fb-cond (decorate conditional-hello
+                              eternal-cache))
+
+  (time (prot-fb-cond "qwe"))
+  (time (prot-fb-cond "qwe" {:fail? true}))
+  
+  
   )
