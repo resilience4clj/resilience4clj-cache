@@ -37,6 +37,7 @@
   [assertion? category msg]
   (when (not assertion?) (anomaly! category msg)))
 
+;; FIXME: do we need this if only one is allowed?
 (defn ^:private get-caching-provider
   [{:keys [caching-provider]}]
   (if caching-provider
@@ -96,15 +97,19 @@
                                              synchronous?)))
 
 (defn ^:private build-config
-  [{:keys [] :as opts}]
-  (-> (MutableConfiguration.)
-      (.setTypes java.lang.Object java.lang.Object)
-      (.setExpiryPolicyFactory (get-expiry-policy opts))))
+  [{:keys [configurator] :as opts}]
+  (if configurator
+    (configurator)
+    (-> (MutableConfiguration.)
+        (.setTypes java.lang.Object java.lang.Object)
+        (.setExpiryPolicyFactory (get-expiry-policy opts)))))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Public functions
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
+;; FIXME: blazing cache uses an alternative call to manager to connect
+;; to cluster - default won't cut it
 (defn create
   ([n]
    (create n nil))
