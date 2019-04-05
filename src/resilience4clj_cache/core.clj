@@ -148,11 +148,14 @@
              out)))
        (catch Throwable t
          (swap! metrics update :errors inc)
-         (.remove cache args)
          (trigger-event c :ERROR args {:cause t})
          (let [failure-handler (get-failure-handler opts)
                args' (-> args vec (conj {:cause t}))]
            (apply failure-handler args')))))))
+
+(defn invalidate
+  [{:keys [cache] :as c}]
+  (.removeAll cache))
 
 (defn metrics
   [{:keys [metrics]}]
@@ -192,6 +195,22 @@
      (if fail?
        (throw (ex-info "Hello failed :(" {:here :extra-data}))
        (str "Hello " n "!"))))
+
+  (defn create-oscilating-hello
+    [x]
+    (let [cycle (atom :good)
+          c (atom 0)]
+      (fn [n]
+        (if (= x @c)
+          (do
+            (swap! cycle #(if (= % :good) :bad :good))
+            (reset! c 0)))
+        (swap! c inc)
+        (if (= :bad @cycle)
+          (throw (ex-info "Hello failed :(" {:here :extra-data}))
+          (do
+            (Thread/sleep 1000)
+            (str "Hello " n "!"))))))
   
   (def cache (create "cache-name" {:expire-after 5000}))
 
@@ -232,11 +251,8 @@
   
   (def eternal-cache (create "eternal"))
 
-  (def prot-fb-cond (decorate conditional-hello
-                              eternal-cache))
+  (def prot-fb (decorate (create-oscilating-hello 3)
+                         eternal-cache))
 
-  (time (prot-fb-cond "qwe"))
-  (time (prot-fb-cond "qwe" {:fail? true}))
-  
   
   )
