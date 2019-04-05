@@ -15,11 +15,16 @@
 
            (java.util.concurrent TimeUnit)
 
-           (java.time LocalDateTime)))
+           (java.time LocalDateTime)
+
+           (java.security MessageDigest)
+
+           (java.math BigInteger)))
 
 (defn ^:private anom-map
   [category msg]
-  {:resilience4clj.anomaly/category (keyword "resilience4clj.anomaly" (name category))
+  {:resilience4clj.anomaly/category (keyword "resilience4clj.anomaly"
+                                             (name category))
    :resilience4clj.anomaly/message msg})
 
 (defn ^:private anomaly!
@@ -27,6 +32,11 @@
    (throw (ex-info msg (anom-map name msg))))
   ([name msg cause]
    (throw (ex-info msg (anom-map name msg) cause))))
+
+(defn ^:private md5 [^String s]
+  (let [algorithm (MessageDigest/getInstance "MD5")
+        raw (.digest algorithm (.getBytes s))]
+    (format "%032x" (BigInteger. 1 raw))))
 
 (defn ^:private get-failure-handler [{:keys [fallback]}]
   (if fallback
@@ -101,7 +111,7 @@
   (if configurator
     (configurator)
     (-> (MutableConfiguration.)
-        (.setTypes java.lang.Object java.lang.Object)
+        (.setTypes java.lang.String java.lang.Object)
         (.setExpiryPolicyFactory (get-expiry-policy opts)))))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -136,7 +146,9 @@
 
 (defn ^:private cache-entry-id
   [f args]
-  args)
+  (-> (conj args f)
+      .toString
+      md5))
 
 (defn ^:private hit-cache!
   [{:keys [cache metrics] :as c} id]
@@ -160,7 +172,7 @@
        (let [id (cache-entry-id f args)]
          (if (.containsKey cache id)
            (hit-cache! c id)
-           (let [new-value (apply f id)]
+           (let [new-value (apply f args)]
              (missed-cache! c id new-value))))
        (catch Throwable t
          (swap! metrics update :errors inc)
@@ -200,6 +212,10 @@
     (Thread/sleep 1000)
     (str "Hello " n "!"))
 
+  (defn ext-call2 [n]
+    (Thread/sleep 1000)
+    (str "Olá " n "!"))
+  
   (defn fail-hello [n]
     (throw (ex-info "Hello failed :(" {:here :extra-data})))
 
@@ -231,6 +247,7 @@
   (def cache (create "cache-name" {:expire-after 5000}))
 
   (def dec-call (decorate ext-call cache))
+  (def dec-call2 (decorate ext-call2 cache))
 
   (def protected (decorate fail-hello cache))
 
@@ -255,6 +272,7 @@
                     (println evt)))
 
   (dec-call "Tiago")
+  (dec-call2 "Tiago")
   
   (time (dotimes [n 50]
           (dec-call "Bla")))
