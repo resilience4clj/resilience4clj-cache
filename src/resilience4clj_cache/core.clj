@@ -129,23 +129,34 @@
                          .getExpiryForUpdate
                          .getDurationAmount)})))
 
+(defn ^:private cache-entry-id
+  [f args]
+  args)
+
+(defn ^:private hit-cache!
+  [{:keys [cache metrics] :as c} id]
+  (swap! metrics update :hits inc)
+  (trigger-event c :HIT id)
+  (.get cache id))
+
+(defn ^:private missed-cache!
+  [{:keys [cache metrics] :as c} id new-value]
+  (swap! metrics update :misses inc)
+  (.put cache id new-value)
+  (trigger-event c :MISSED id)
+  new-value)
+
 (defn decorate
   ([f cache]
    (decorate f cache nil))
   ([f {:keys [cache metrics] :as c} opts]
    (fn [& args]
      (try
-       (if (.containsKey cache args)
-         (do
-           (swap! metrics update :hits inc)
-           (.get cache args)
-           (trigger-event c :HIT args))
-         (do
-           (let [out (apply f args)]
-             (swap! metrics update :misses inc)
-             (.put cache args out)
-             (trigger-event c :MISSED args)
-             out)))
+       (let [id (cache-entry-id f args)]
+         (if (.containsKey cache id)
+           (hit-cache! c id)
+           (let [new-value (apply f id)]
+             (missed-cache! c id new-value))))
        (catch Throwable t
          (swap! metrics update :errors inc)
          (trigger-event c :ERROR args {:cause t})
@@ -240,8 +251,8 @@
 
   (dec-call "Tiago")
   
-  (dotimes [n 5]
-    (dec-call "Bla"))
+  (time (dotimes [n 50]
+          (dec-call "Bla")))
   
   (metrics cache)
 
@@ -255,4 +266,4 @@
                          eternal-cache))
 
   
-  )
+  (metrics cache))
