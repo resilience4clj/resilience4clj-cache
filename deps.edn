@@ -10,9 +10,9 @@
   {:extra-deps
    {org.cache2k/cache2k-jcache    {:mvn/version "1.2.0.Final"}}}
 
-  :blazingcache
+  :inifinispan
   {:extra-deps
-   {org.blazingcache/blazingcache-jcache    {:mvn/version "1.13.0"}}}
+   {org.infinispan/infinispan-embedded    {:mvn/version "9.1.7.Final"}}}
   
   :dev
   {:extra-paths ["dev"]
