@@ -1,5 +1,5 @@
 (ns resilience4clj-cache.core
-  (:refer-clojure :exclude [load])
+  (:refer-clojure :exclude [reset!])
   (:import (javax.cache Caching)
            
            (javax.cache.configuration MutableConfiguration
@@ -64,6 +64,17 @@
           (ModifiedExpiryPolicy. (Duration. TimeUnit/MILLISECONDS
                                             expire-after')))))))
 
+(defn ^:private get-fn-name
+  [f]
+  (str f))
+
+(defn ^:private cache-entry-id
+  [f args]
+  (-> (conj args (get-fn-name f))
+      .toString
+      md5))
+
+;; Attention: no :fn-name as it has no idea of the fn that triggered it
 (defn ^:private expired-event->data [e]
   {:event-type :EXPIRED
    :cache-name (-> e .getSource .getName)
@@ -83,20 +94,33 @@
      (doseq [f (get @listeners evt-type)]
        (f evt-data)))))
 
+(defn ^:private hit-cache!
+  [{:keys [cache metrics] :as c} fn-name id]
+  (swap! metrics update :hits inc)
+  (trigger-event c :HIT fn-name id)
+  (.get cache id))
+
+(defn ^:private missed-cache!
+  [{:keys [cache metrics] :as c} fn-name id new-value]
+  (swap! metrics update :misses inc)
+  (.put cache id new-value)
+  (trigger-event c :MISSED fn-name id)
+  new-value)
+
 (defn ^:private get-expired-listener
-  [f]
+  [handler]
   (reify Factory
     (create [_]
       (reify CacheEntryExpiredListener
         (onExpired [_ e]
           (doseq [evt e]
-            (f (expired-event->data evt))))))))
+            (handler (expired-event->data evt))))))))
 
 (defn ^:private build-expired-listener-config
-  [f]
+  [handler]
   (let [old-value-required? false
         synchronous? false]
-    (MutableCacheEntryListenerConfiguration. ^Factory (get-expired-listener f)
+    (MutableCacheEntryListenerConfiguration. ^Factory (get-expired-listener handler)
                                              nil ;; listener filter not needed
                                              old-value-required?
                                              synchronous?)))
@@ -119,7 +143,6 @@
 ;; Public functions
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
-
 (defn ^:private default-metrics []
   {:hits 0 :misses 0 :errors 0
    :manual-puts 0 :manual-gets 0})
@@ -128,7 +151,7 @@
   ([n]
    (create n nil))
   ([n {:keys [provider-fn manager-fn config-fn]
-       :or {provider-fn get-caching-provider
+       :or {provider-fn get-provider
             manager-fn  get-manager
             config-fn   get-config}
        :as opts}]
@@ -152,29 +175,6 @@
                          .getExpiryForUpdate
                          .getDurationAmount)})))
 
-(defn ^:private get-fn-name
-  [f]
-  (str f))
-
-(defn ^:private cache-entry-id
-  [f args]
-  (-> (conj args (get-fn-name f))
-      .toString
-      md5))
-
-(defn ^:private hit-cache!
-  [{:keys [cache metrics] :as c} fn-name id]
-  (swap! metrics update :hits inc)
-  (trigger-event c :HIT fn-name id)
-  (.get cache id))
-
-(defn ^:private missed-cache!
-  [{:keys [cache metrics] :as c} fn-name id new-value]
-  (swap! metrics update :misses inc)
-  (.put cache id new-value)
-  (trigger-event c :MISSED fn-name id)
-  new-value)
-
 (defn decorate
   ([f cache]
    (decorate f cache nil))
@@ -194,7 +194,24 @@
                  args' (-> args vec (conj {:cause t}))]
              (apply failure-handler args'))))))))
 
-(defn invalidate
+(defn put!
+  [{:keys [cache metrics] :as c} args value]
+  (swap! metrics update :manual-puts inc)
+  (let [id (cache-entry-id 'nofn-manual args)
+        fn-name (get-fn-name 'nofn-manual)]
+    (.put cache id value)
+    (trigger-event c :MANUAL-PUT fn-name id)
+    value))
+
+(defn get!
+  [{:keys [cache metrics] :as c} args]
+  (swap! metrics update :hits inc)
+  (let [id (cache-entry-id 'nofn-manual args)
+        fn-name (get-fn-name 'nofn-manual)]
+    (trigger-event c :MANUAL-GET fn-name id)
+    (.get cache id)))
+
+(defn invalidate!
   [{:keys [cache] :as c}]
   (.removeAll cache))
 
@@ -202,17 +219,17 @@
   [{:keys [metrics]}]
   (deref metrics))
 
-(defn reset
+(defn reset!
   [{:keys [metrics] :as c}]
-  (reset! metrics {:hits 0 :misses 0 :errors 0})
+  (reset! metrics (default-metrics))
   c)
 
 (defn listen-event
   [{:keys [listeners cache]} event-key f]
   (assert-anomaly! (some #(= event-key %)
-                         #{:EXPIRED :HIT :MISSED :ERROR})
+                         #{:EXPIRED :HIT :MISSED :MANUAL-PUT :MANUAL-GET :ERROR})
                    :invalid-event-key
-                   "event-key must be one of :EXPIRED :HIT :MISSED :ERROR")
+                   "event-key must be one of :EXPIRED :HIT :MISSED :MANUAL-PUT :MANUAL-GET :ERROR")
   (let [coll (get listeners event-key)]
     (if (= :EXPIRED event-key)
       (-> cache
@@ -269,10 +286,10 @@
                                     {:fallback (fn [n e]
                                                  (str "Failed with " e " for " n))}))
   
-  (listen-event cache :EXPIRED
-                (fn [evt]
-                  (println ":EXPIRED being called")
-                  (println evt)))
+  #_(listen-event cache :EXPIRED
+                  (fn [evt]
+                    (println ":EXPIRED being called")
+                    (println evt)))
 
   #_(listen-event cache :HIT
                   (fn [evt]
@@ -284,6 +301,16 @@
                     (println ":MISSED being called")
                     (println evt)))
 
+  #_(listen-event cache :MANUAL-PUT
+                  (fn [evt]
+                    (println ":MANUAL-PUT being called")
+                    (println evt)))
+
+  #_(listen-event cache :MANUAL-GET
+                  (fn [evt]
+                    (println ":MANUAL-GET being called")
+                    (println evt)))
+
   (dec-call "Tiago")
   (dec-call2 "Tiago")
   
@@ -292,6 +319,9 @@
   
   (metrics cache)
 
+  (put! cache [:a] "12")
+  (get! cache [:a])
+  
 
   ;; these tests don work because the cache invalidation happens at the
   ;; level of the collection of parameters
@@ -303,3 +333,20 @@
 
   
   (metrics cache))
+
+
+(comment
+
+
+  (defn hello [n]
+    (str "Hello " n "!!"))
+
+  (def prot (-> hello
+                (r/decorate retry
+                            {:fallback
+                             (fn [n e]
+                               (c/get! cache n))
+                             :effect
+                             (fn [n value]
+                               (c/put! cache n value))})
+                (tl/decorate timelimitter))))
