@@ -47,13 +47,6 @@
   [assertion? category msg]
   (when (not assertion?) (anomaly! category msg)))
 
-;; FIXME: do we need this if only one is allowed?
-(defn ^:private get-caching-provider
-  [{:keys [caching-provider]}]
-  (if caching-provider
-    (Caching/getCachingProvider caching-provider)
-    (Caching/getCachingProvider)))
-
 ;; FIXME reconsider whether making eternal? by default is a good idea
 (defn ^:private get-expiry-policy
   [{:keys [expire-after eternal?]}]
@@ -108,29 +101,42 @@
                                              old-value-required?
                                              synchronous?)))
 
-(defn ^:private build-config
-  [{:keys [configurator] :as opts}]
-  (if configurator
-    (configurator)
-    (-> (MutableConfiguration.)
-        (.setTypes java.lang.String java.lang.Object)
-        (.setExpiryPolicyFactory (get-expiry-policy opts)))))
+(defn ^:private get-provider
+  [opts]
+  (Caching/getCachingProvider))
+
+(defn ^:private get-manager
+  [provider opts]
+  (.getCacheManager provider))
+
+(defn ^:private get-config
+  [opts]
+  (-> (MutableConfiguration.)
+      (.setTypes java.lang.String java.lang.Object)
+      (.setExpiryPolicyFactory (get-expiry-policy opts))))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Public functions
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
-;; FIXME: blazing cache uses an alternative call to manager to connect
-;; to cluster - default won't cut it
+
+(defn ^:private default-metrics []
+  {:hits 0 :misses 0 :errors 0
+   :manual-puts 0 :manual-gets 0})
+
 (defn create
   ([n]
    (create n nil))
-  ([n opts]
-   (let [provider (get-caching-provider opts)
-         manager (.getCacheManager provider)
-         config (build-config opts)]
+  ([n {:keys [provider-fn manager-fn config-fn]
+       :or {provider-fn get-caching-provider
+            manager-fn  get-manager
+            config-fn   get-config}
+       :as opts}]
+   (let [provider (provider-fn opts)
+         manager (manager-fn provider opts)
+         config (config-fn opts)]
      (.destroyCache manager n)
-     {:metrics (atom {:hits 0 :misses 0 :errors 0})
+     {:metrics (atom (default-metrics))
       :listeners (atom {})
       :cache (.createCache manager n config)
       :config config})))
@@ -146,15 +152,15 @@
                          .getExpiryForUpdate
                          .getDurationAmount)})))
 
-(defn ^:private cache-entry-id
-  [f args]
-  (-> (conj args f)
-      .toString
-      md5))
-
 (defn ^:private get-fn-name
   [f]
   (str f))
+
+(defn ^:private cache-entry-id
+  [f args]
+  (-> (conj args (get-fn-name f))
+      .toString
+      md5))
 
 (defn ^:private hit-cache!
   [{:keys [cache metrics] :as c} fn-name id]
