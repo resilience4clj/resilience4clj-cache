@@ -112,7 +112,13 @@ invalidated). Read below for more advanced options.
 
 :caching-provider --- FIXME: do we need this if only one is allowed?
 - org.cache2k.jcache.provider.JCacheProvider  --- cache2k: https://cache2k.org
-- blazingcache.jcache.BlazingCacheProvider --- blazing cache: https://blazingcache.org/
+- ehcache
+- infinispan
+- redisson
+
+- blazingcache.jcache.BlazingCacheProvider --- blazing cache: https://blazingcache.org/-
+
+
 :configurator - fn that returns a config (overrules the other two)
 
 :expire-after (default 6000 - at least 1000)
