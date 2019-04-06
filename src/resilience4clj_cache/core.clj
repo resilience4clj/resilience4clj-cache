@@ -41,7 +41,7 @@
 (defn ^:private get-failure-handler [{:keys [fallback]}]
   (if fallback
     (fn [& args] (apply fallback args))
-    (fn [& args] (throw (-> args last :cause)))))
+    (fn [& args] (throw (-> args first :cause)))))
 
 (defn ^:private assert-anomaly!
   [assertion? category msg]
@@ -191,13 +191,14 @@
            (swap! metrics update :errors inc)
            (trigger-event c :ERROR fn-name id {:cause t})
            (let [failure-handler (get-failure-handler opts)
-                 args' (-> args vec (conj {:cause t}))]
+                 args' (-> args (conj {:cause t}))]
              (apply failure-handler args'))))))))
 
 (defn put!
   [{:keys [cache metrics] :as c} args value]
   (swap! metrics update :manual-puts inc)
-  (let [id (cache-entry-id 'nofn-manual args)
+  (let [args' (if (not (seqable? args)) [args] args)
+        id (cache-entry-id 'nofn-manual args')
         fn-name (get-fn-name 'nofn-manual)]
     (.put cache id value)
     (trigger-event c :MANUAL-PUT fn-name id)
@@ -206,7 +207,8 @@
 (defn get!
   [{:keys [cache metrics] :as c} args]
   (swap! metrics update :hits inc)
-  (let [id (cache-entry-id 'nofn-manual args)
+  (let [args' (if (not (seqable? args)) [args] args)
+        id (cache-entry-id 'nofn-manual args')
         fn-name (get-fn-name 'nofn-manual)]
     (trigger-event c :MANUAL-GET fn-name id)
     (.get cache id)))
@@ -283,7 +285,7 @@
 
   (def protected-fallback (decorate fail-hello
                                     cache
-                                    {:fallback (fn [n e]
+                                    {:fallback (fn [e n]
                                                  (str "Failed with " e " for " n))}))
   
   #_(listen-event cache :EXPIRED
@@ -319,8 +321,8 @@
   
   (metrics cache)
 
-  (put! cache [:a] "12")
-  (get! cache [:a])
+  (put! cache :a "12")
+  (get! cache :a)
   
 
   ;; these tests don work because the cache invalidation happens at the
