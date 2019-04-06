@@ -78,11 +78,12 @@
    :creation-time (java.time.LocalDateTime/now)})
 
 (defn ^:private trigger-event
-  ([c evt-type k]
-   (trigger-event c evt-type k nil))
-  ([{:keys [cache listeners]} evt-type k opts]
+  ([c evt-type fn-name k]
+   (trigger-event c evt-type fn-name k nil))
+  ([{:keys [cache listeners]} evt-type fn-name k opts]
    (let [evt-data (merge {:event-type evt-type
                           :cache-name (.getName cache)
+                          :fn-name fn-name
                           :key k
                           :creation-time (LocalDateTime/now)}
                          opts)]
@@ -150,17 +151,21 @@
       .toString
       md5))
 
+(defn ^:private get-fn-name
+  [f]
+  (str f))
+
 (defn ^:private hit-cache!
-  [{:keys [cache metrics] :as c} id]
+  [{:keys [cache metrics] :as c} fn-name id]
   (swap! metrics update :hits inc)
-  (trigger-event c :HIT id)
+  (trigger-event c :HIT fn-name id)
   (.get cache id))
 
 (defn ^:private missed-cache!
-  [{:keys [cache metrics] :as c} id new-value]
+  [{:keys [cache metrics] :as c} fn-name id new-value]
   (swap! metrics update :misses inc)
   (.put cache id new-value)
-  (trigger-event c :MISSED id)
+  (trigger-event c :MISSED fn-name id)
   new-value)
 
 (defn decorate
@@ -168,18 +173,19 @@
    (decorate f cache nil))
   ([f {:keys [cache metrics] :as c} opts]
    (fn [& args]
-     (try
-       (let [id (cache-entry-id f args)]
+     (let [id (cache-entry-id f args)
+           fn-name (get-fn-name f)]
+       (try
          (if (.containsKey cache id)
-           (hit-cache! c id)
+           (hit-cache! c fn-name id)
            (let [new-value (apply f args)]
-             (missed-cache! c id new-value))))
-       (catch Throwable t
-         (swap! metrics update :errors inc)
-         (trigger-event c :ERROR args {:cause t})
-         (let [failure-handler (get-failure-handler opts)
-               args' (-> args vec (conj {:cause t}))]
-           (apply failure-handler args')))))))
+             (missed-cache! c fn-name id new-value)))
+         (catch Throwable t
+           (swap! metrics update :errors inc)
+           (trigger-event c :ERROR fn-name id {:cause t})
+           (let [failure-handler (get-failure-handler opts)
+                 args' (-> args vec (conj {:cause t}))]
+             (apply failure-handler args'))))))))
 
 (defn invalidate
   [{:keys [cache] :as c}]
@@ -256,20 +262,20 @@
                                     {:fallback (fn [n e]
                                                  (str "Failed with " e " for " n))}))
   
-  #_(listen-event cache :EXPIRED
-                  (fn [evt]
-                    (println ":EXPIRED being called")
-                    (println evt)))
+  (listen-event cache :EXPIRED
+                (fn [evt]
+                  (println ":EXPIRED being called")
+                  (println evt)))
 
-  #_(listen-event cache :HIT
-                  (fn [evt]
-                    (println ":HIT being called")
-                    (println evt)))
+  (listen-event cache :HIT
+                (fn [evt]
+                  (println ":HIT being called")
+                  (println evt)))
 
-  #_(listen-event cache :MISSED
-                  (fn [evt]
-                    (println ":MISSED being called")
-                    (println evt)))
+  (listen-event cache :MISSED
+                (fn [evt]
+                  (println ":MISSED being called")
+                  (println evt)))
 
   (dec-call "Tiago")
   (dec-call2 "Tiago")
