@@ -96,7 +96,8 @@
     (create [_]
       (reify CacheEntryExpiredListener
         (onExpired [_ e]
-          (f (expired-event->data e)))))))
+          (doseq [evt e]
+            (f (expired-event->data evt))))))))
 
 (defn ^:private build-expired-listener-config
   [f]
@@ -267,15 +268,15 @@
                   (println ":EXPIRED being called")
                   (println evt)))
 
-  (listen-event cache :HIT
-                (fn [evt]
-                  (println ":HIT being called")
-                  (println evt)))
+  #_(listen-event cache :HIT
+                  (fn [evt]
+                    (println ":HIT being called")
+                    (println evt)))
 
-  (listen-event cache :MISSED
-                (fn [evt]
-                  (println ":MISSED being called")
-                  (println evt)))
+  #_(listen-event cache :MISSED
+                  (fn [evt]
+                    (println ":MISSED being called")
+                    (println evt)))
 
   (dec-call "Tiago")
   (dec-call2 "Tiago")
