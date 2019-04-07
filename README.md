@@ -35,6 +35,9 @@ monitoring and metrics).
 * [Getting Started](#getting-started)
 * [Cache Settings](#cache-settings)
 * [Fallback Strategies](#fallback-strategies)
+* [Manual Cache Manipulation](#manual-cache-manipulation)
+* [Invalidating the Cache](#invalidating-the-cache)
+* [Using as an Effect](#using-as-an-effect)
 * [Metrics](#metrics)
 * [Events](#events)
 * [Exception Handling](#exception-handling)
@@ -58,7 +61,41 @@ If you are using `lein` instead, add it as a dependency to your
 [resilience4clj/resilience4clj-cache "0.1.0"]
 ```
 
-Require the library:
+Resilience4clj cache does depends on a concrete implementation of a
+caching engine to the JSR107 interfaces. Therefore, in order to use
+Resilience4clj cache you need to choose a compatible caching engine.
+
+This is a far from comprehensive list of options:
+
+- [Cache2k](https://cache2k.org): simple embedded, in-memory cache system
+- [Ehcache](http://www.ehcache.org): supports supports offheap storage
+  and distributed, persistence via Terracotta
+- [Infinispan](http://infinispan.org/): embedded caching as well as
+  advanced functionality such as transactions, events, querying,
+  distributed processing, off-heap and geographical failover.
+- [Redisson](https://redisson.org): Redis Java client in-Memory data
+  grid
+- [Apache Ignite](https://ignite.apache.org): memory-centric
+  distributed database, caching, and processing platform for
+  transactional, analytical, and streaming workloads delivering
+  in-memory speeds at petabyte scale
+
+For this getting started let's use a simple embedded, in-memory cache
+via Infinispan. Add it as a dependency to your `deps.edn` file:
+
+``` clojure
+org.infinispan/infinispan-embedded {:mvn/version "9.1.7.Final"}
+```
+
+Or, if you  are using `lein` instead,  add it as a  dependency to your
+`project.clj` file:
+
+``` clojure
+[org.infinispan/infinispan-embedded "9.1.7.Final"]
+```
+
+Once both Resilience4clj cache and a concrete cache engine in place
+you can require the library:
 
 ``` clojure
 (require '[resilience4clj-cache.core :as c])
@@ -104,71 +141,78 @@ Hello World!
 Hello World!
 ```
 
-By default the `create` function will create an in-memory cache that
-will retain results for as long as it's in memory (or until manually
-invalidated). Read below for more advanced options.
+By default the `create` function will set your cache as eternal so
+every single call to `protected` above will return `"Hello World!"`
+for long as the cache entry is in memory (or until the cache is
+manually invalidated - see function `invalidate!` below).
 
 ## Cache Settings
 
-:caching-provider --- FIXME: do we need this if only one is allowed?
-- org.cache2k.jcache.provider.JCacheProvider  --- cache2k: https://cache2k.org
-- ehcache
-- infinispan
-- redisson
+If you simply call the `create` function providing a cache name,
+Resilience4clj cache will capture the default caching provider from
+your classpath and then use sensible and simple settings to bring your
+cache system up. These steps should cover many of the basic caching
+scenarios.
 
-- blazingcache.jcache.BlazingCacheProvider --- blazing cache: https://blazingcache.org/-
+The `create` supports a second map argument for further
+configurations.
 
+There are two very basic fine-tuning settings available:
 
-:configurator - fn that returns a config (overrules the other two)
+1. `:eternal?` - whether this cache will retain its entries forever or
+   not. Caching engines might still discard entries if certain
+   conditions are met (i.e. full memory) so this should be used as an
+   indication of intent more than a solid dependency. Default `true`.
+2. `:expire-after` - if you don't want an eternal cache entry, chances
+   are you would prefer entries that expire after a certain amount of
+   time. You can specify any amount of milliseconds of at least 1000
+   or higher (if specified, `:eternal?` is automatically turned off).
 
-:expire-after (default 6000 - at least 1000)
-:eternal? (default true)
+For more advanced scenarios, you might want to set up your caching
+engine with all sorts of whistles and belts. In these scenarios you
+will need to provide a combination of factory functions to cover for
+your particular need:
 
-https://jcp.org/aboutJava/communityprocess/implementations/jsr107/index.html
+1. `:provider-fn` - function that receives the options map sent to
+   `create` and must return a concrete implementation of a
+   `javax.cache.spi.CachingProvider`. If `:provider-fn` is not
+   specified, Resilience4clj will simply get the default caching
+   provider on your clasppath.
+2. `:manager-fn` - function that receives the `CachingProvider` as a
+   first argument and the options map sent to `create` as the second
+   one and must return a concrete implementation of a
+   `CacheManager`. If `:manager-fn` is not specified, Resilience4clj
+   will simply ask the provider for its default `CacheManager`.
+3. `:config-fn` - function that receives the options maps sent to
+   `create` and must return any concrete implementation of
+   `javax.cache.configuration.Configuration`. If `:config-fn` is not
+   specified, Resilience4clj will create a `MutableConfiguration` and
+   use `:eternal?` and `:expire-after` above to do some basic fine
+   tuning on the config.
 
+Things to notice when setting up your cache using these factory
+functions above:
 
+* Among many other impactful settings, your expiration policies will
+  definitely affect the way that your cache behaves.
+* If your configuration does not expose mutable abilities such as the
+  method `registerCacheEntryListener`, then listening the expiration
+  events as documented in the [Events](#events) section is not going
+  to work.
+* Resilience4clj cache expects the `<K, V>` of the Cache to be
+  `java.lang.String, java.lang.Object`. Other settings have not been
+  tested and might not work.
 
-When creating a retry, you can fine tune three of its settings:
-
-1. `:max-attempts` - the amount of attempts it will try before giving
-   up. Default is `3`.
-2. `:wait-duration` - the duration in milliseconds between attempts.
-   Default is `500`.
-3. `:interval-function` - sometimes you need a more advanced strategy
-   between attempts. Some systems react better with a progressive
-   backoff for instance (you can start retrying faster but increasing
-   the waiting time in case the remote system is offline). For these
-   cases you can specify an interval function that will control this
-   waiting time. See below for more. Default here is a linear function
-   of `:wait-duration` intervals.
-
-These three options can be sent to `create` as a map. In the following
-example, any function decorated with `retry` will be attempted for 10
-times with in 300ms intervals.
+Here is an example creating a cache that expires in a minute:
 
 ``` clojure
-(def retry (create {:max-attempts 10
-                    :wait-duration 300}))
+(def cache (c/create {:expire-after 60000}))
 ```
 
-Resilience4clj provides a series of commonly-used interval
-functions. They are all in the namespace
-`resilience4clj-retry.interval-functions`:
-
-* `of-default` - basic linear function with 500ms intervals
-* `of-millis` - linear function with a specified interval in
-  milliseconds
-* `of-randomized` - starts with an initial, specified interval in
-  milliseconds and then randomizes by an optional factor on subsequent
-  attempts
-* `of-exponential-backoff` - starts with an initial, specified
-  interval in milliseconds and then backs off by an optional
-  multiplier on subsequent calls (default multiplier is 1.5).
-* `of-exponential-random-backoff` - starts with an initial, specified
-  interval in milliseconds and then backs off by an optional
-  multiplier and randomizes by an optional factor on subsequent calls.
-
 ## Fallback Strategies
+
+TBD: mostly it should be ok... just double check (particularly param
+order)
 
 When decorating your function with a retry you can opt to have a
 fallback function. This function will be called instead of an
@@ -224,7 +268,21 @@ strategies:
 3. **Advanced**: multiple strategies can also be combined in order to
    create even better fallback strategies.
 
+## Manual Cache Manipulation
+
+TBD
+
+## Invalidating the Cache
+
+TBD
+
+## Using as an Effect
+
+TBD
+
 ## Metrics
+
+TBD: get the real metrics
 
 The function `metrics` returns a map with the metrics of the retry:
 
@@ -240,6 +298,8 @@ The function `metrics` returns a map with the metrics of the retry:
 The nodes should be self-explanatory.
 
 ## Events
+
+TBD: get the real events
 
 You can listen to events generated by your retries. This is
 particularly useful for logging, debugging, or monitoring the health
@@ -271,10 +331,14 @@ All events receive a map containing the `:event-type`, the
 
 ## Exception Handling
 
+TBD: copy something from circuit breaker
+
 When a retry exhausts all the attempts it will throw the very last
 exception returned from the decorated, failing function call.
 
 ## Composing Further
+
+TBD: review/update plus refer back to using as an effect
 
 Resilience4clj is composed of [several modules][about] that
 easily compose together. For instance, if you are also using the
