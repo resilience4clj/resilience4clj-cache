@@ -1,12 +1,17 @@
 (ns resilience4clj-cache.core
   (:refer-clojure :exclude [reset!])
-  (:import (javax.cache Caching)
-           
+  (:import (javax.cache Caching
+                        Cache
+                        CacheManager)
+
+           (javax.cache.spi CachingProvider)
+
            (javax.cache.configuration MutableConfiguration
                                       MutableCacheEntryListenerConfiguration
                                       Factory)
 
-           (javax.cache.event CacheEntryExpiredListener)
+           (javax.cache.event CacheEntryExpiredListener
+                              CacheEntryEvent)
 
            (javax.cache.expiry ExpiryPolicy
                                EternalExpiryPolicy
@@ -62,7 +67,7 @@
       (reify Factory
         (create [_]
           (ModifiedExpiryPolicy. (Duration. TimeUnit/MILLISECONDS
-                                            expire-after')))))))
+                                            ^long expire-after')))))))
 
 (defn ^:private get-fn-name
   [f]
@@ -71,11 +76,11 @@
 (defn ^:private cache-entry-id
   [f args]
   (-> (conj args (get-fn-name f))
-      .toString
+      str
       md5))
 
 ;; Attention: no :fn-name as it has no idea of the fn that triggered it
-(defn ^:private expired-event->data [e]
+(defn ^:private expired-event->data [^CacheEntryEvent e]
   {:event-type :EXPIRED
    :cache-name (-> e .getSource .getName)
    :key (.getKey e)
@@ -84,7 +89,7 @@
 (defn ^:private trigger-event
   ([c evt-type fn-name k]
    (trigger-event c evt-type fn-name k nil))
-  ([{:keys [cache listeners]} evt-type fn-name k opts]
+  ([{:keys [^Cache cache listeners]} evt-type fn-name k opts]
    (let [evt-data (merge {:event-type evt-type
                           :cache-name (.getName cache)
                           :fn-name fn-name
@@ -95,13 +100,13 @@
        (f evt-data)))))
 
 (defn ^:private hit-cache!
-  [{:keys [cache metrics] :as c} fn-name id]
+  [{:keys [^Cache cache metrics] :as c} fn-name id]
   (swap! metrics update :hits inc)
   (trigger-event c :HIT fn-name id)
   (.get cache id))
 
 (defn ^:private missed-cache!
-  [{:keys [cache metrics] :as c} fn-name id new-value]
+  [{:keys [^Cache cache metrics] :as c} fn-name id new-value]
   (swap! metrics update :misses inc)
   (.put cache id new-value)
   (trigger-event c :MISSED fn-name id)
@@ -130,7 +135,7 @@
   (Caching/getCachingProvider))
 
 (defn ^:private get-manager
-  [provider opts]
+  [^CachingProvider provider opts]
   (.getCacheManager provider))
 
 (defn ^:private get-config
@@ -155,9 +160,9 @@
             manager-fn  get-manager
             config-fn   get-config}
        :as opts}]
-   (let [provider (provider-fn opts)
-         manager (manager-fn provider opts)
-         config (config-fn opts)]
+   (let [provider ^CachingProvider (provider-fn opts)
+         manager ^CacheManager (manager-fn provider opts)
+         config ^MutableConfiguration (config-fn opts)]
      (.destroyCache manager n)
      {:metrics (atom (default-metrics))
       :listeners (atom {})
@@ -165,20 +170,20 @@
       :config config})))
 
 (defn config
-  [{:keys [config]}]
+  [{:keys [^MutableConfiguration config]}]
   (let [expiry-policy (-> config
                           .getExpiryPolicyFactory
                           .create)]
     (if (instance? EternalExpiryPolicy expiry-policy)
       {:eternal? true}
-      {:expire-after (-> expiry-policy
+      {:expire-after (-> ^EternalExpiryPolicy expiry-policy
                          .getExpiryForUpdate
                          .getDurationAmount)})))
 
 (defn decorate
   ([f cache]
    (decorate f cache nil))
-  ([f {:keys [cache metrics] :as c} opts]
+  ([f {:keys [^Cache cache metrics] :as c} opts]
    (fn [& args]
      (let [id (cache-entry-id f args)
            fn-name (get-fn-name f)]
@@ -195,7 +200,7 @@
              (apply failure-handler args'))))))))
 
 (defn put!
-  [{:keys [cache metrics] :as c} args value]
+  [{:keys [^Cache cache metrics] :as c} args value]
   (swap! metrics update :manual-puts inc)
   (let [args' (if (not (seqable? args)) [args] args)
         id (cache-entry-id 'nofn-manual args')
@@ -205,7 +210,7 @@
     value))
 
 (defn get!
-  [{:keys [cache metrics] :as c} args]
+  [{:keys [^Cache cache metrics] :as c} args]
   (swap! metrics update :hits inc)
   (let [args' (if (not (seqable? args)) [args] args)
         id (cache-entry-id 'nofn-manual args')
@@ -214,7 +219,7 @@
     (.get cache id)))
 
 (defn invalidate!
-  [{:keys [cache] :as c}]
+  [{:keys [^Cache cache] :as c}]
   (.removeAll cache))
 
 (defn metrics
@@ -227,7 +232,7 @@
   c)
 
 (defn listen-event
-  [{:keys [listeners cache]} event-key f]
+  [{:keys [^Cache cache listeners]} event-key f]
   (assert-anomaly! (some #(= event-key %)
                          #{:EXPIRED :HIT :MISSED :MANUAL-PUT :MANUAL-GET :ERROR})
                    :invalid-event-key
@@ -238,7 +243,7 @@
           (.registerCacheEntryListener (build-expired-listener-config f)))
       (swap! listeners assoc event-key (conj coll f)))))
 
-(do
+(comment
 
   (defn ext-call [n]
     (Thread/sleep 1000)
@@ -346,9 +351,9 @@
   (def prot (-> hello
                 (r/decorate retry
                             {:fallback
-                             (fn [n e]
+                             (fn [e n]
                                (c/get! cache n))
                              :effect
-                             (fn [n value]
+                             (fn [value n]
                                (c/put! cache n value))})
                 (tl/decorate timelimitter))))
