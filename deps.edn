@@ -2,7 +2,6 @@
  
  :deps
  {org.clojure/clojure                       {:mvn/version "1.10.0"}
-  io.github.resilience4j/resilience4j-cache {:mvn/version "0.13.2"}
   javax.cache/cache-api                     {:mvn/version "1.1.0"}}
 
  :aliases
@@ -10,7 +9,7 @@
   {:extra-deps
    {org.cache2k/cache2k-jcache    {:mvn/version "1.2.0.Final"}}}
 
-  :inifinispan
+  :infinispan
   {:extra-deps
    {org.infinispan/infinispan-embedded    {:mvn/version "9.1.7.Final"}}}
   
