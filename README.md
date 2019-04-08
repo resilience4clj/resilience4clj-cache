@@ -7,6 +7,7 @@
 [github-issues]: https://github.com/luchiniatwork/resilience4clj-cache/issues
 [license-badge]: https://img.shields.io/badge/license-MIT-blue.svg
 [license]: ./LICENSE
+[retry]: https://github.com/luchiniatwork/resilience4clj-retry/
 [status-badge]: https://img.shields.io/badge/project%20status-alpha-brightgreen.svg
 
 # Resilience4Clj Cache
@@ -329,7 +330,68 @@ code, the `cache` will be invalidated:
 
 ## Using as an Effect
 
-TBD
+Resilience4clj cache is a great alternative for creating fallback
+strategies in conjunction with other Resilience4clj libraries.
+
+Some libraries like [Resilience4clj retry][retry] and [Resilience4clj
+circuit breaker][breaker] have a feature called _effects_ for
+capturing side-effects. In this context, a side-effect is a handler
+for processing the successful output of the decorated function call.
+
+For instance, assuming that you have required
+`resilience4clj-retry.core` as `r` and `resilience4clj-retry.core` as
+`c`:
+
+``` clojure
+(def retry (r/create "hello-retry"))
+
+(def cache (c/create "hello-cache"))
+
+(defn hello [person]
+  ;; hypothetical flaky, external HTTP request
+  (str "Hello " person "!!"))
+```
+
+Now that you have a default `retry`, a default `cache`, and a
+potentially flaky function `hello` let's create an effect that puts
+the returned value in the cache, a fallback that gets it from the
+cache and a decorated function that puts them together:
+
+``` clojure
+(defn effect-fn
+  [ret person]
+  (c/put! cache person ret))
+
+(defn fallback-fn
+  [e person]
+  (c/get cache person))
+
+(def safe-cached-hello
+  (r/decorate hello retry
+              {:effect effect-fn
+               :fallback fallback-fn}))
+```
+
+The behavior here is that when calling the `safe-cached-hello`
+function, the function `hello` will be retried for a few times (max
+default is 3). In case of success, the returned value will be put in
+the cache. In case of failure whatever value is on the cache will be
+returned.
+
+Of course, this is a very naive approach as it will simply return `nil` in
+a failure scenario where the cache is empty. A more advanced approach
+would be:
+
+``` clojure
+(defn fallback-fn
+  [e person]
+  (if (c/contains? cache person)
+    (c/get cache person)
+    (throw e)))
+```
+
+In the example above, if the the entry for `person` is still not in
+place, the underlying expression is thrown.
 
 ## Metrics
 
