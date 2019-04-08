@@ -223,36 +223,33 @@ you need to inspect it. Example:
 
 ## Fallback Strategies
 
-TBD: mostly it should be ok... just double check (particularly param
-order)
-
-When decorating your function with a retry you can opt to have a
+When decorating your function with a cache you can opt to have a
 fallback function. This function will be called instead of an
-exception being thrown when the retry gives up after reaching the
-max-attempts or when the call would fail (traditional throw). This
-feature can be seen as an obfuscation of a try/catch to consumers.
+exception being thrown when the call would fail (its traditional
+throw). This feature can be seen as an obfuscation of a try/catch to
+consumers.
 
 This is particularly useful if you want to obfuscate from consumers
-that the retry and/or that the external dependency failed. Example:
+that the external dependency failed. Example:
 
 ``` clojure
-(def retry (r/create "hello-service-retry"))
+(def cache (c/create "my-cache"))
 
 (defn hello [person]
   ;; hypothetical flaky, external HTTP request
   (str "Hello " person))
 
-(def retry-hello
-  (r/decorate hello
-              {:fallback (fn [person e]
+(def cached-hello
+  (c/decorate hello
+              {:fallback (fn [e person]
                            (str "Hello from fallback to " person))}))
 ```
 
 The signature of the fallback function is the same as the original
-function plus an exception (`e` on the example above). This exception
-is an `ExceptionInfo` wrapping around the real cause of the error. You
-can inspect the `:cause` node of this exception to learn about the
-inner exception:
+function plus an exception as the first argument (`e` on the example
+above). This exception is an `ExceptionInfo` wrapping around the real
+cause of the error. You can inspect the `:cause` node of this
+exception to learn about the inner exception:
 
 ``` clojure
 (defn fallback-fn [e]
@@ -282,7 +279,38 @@ strategies:
 
 ## Manual Cache Manipulation
 
-TBD
+By default Resilience4clj cache can be used as a decorator to your
+external calls and it will take care of basic caching for you. In some
+circumstances though you might want to interact directly with its
+cache. One such situation is when [using the cache as an
+effect](#using-as-an-effect).
+
+There are two functions to directly manipulate the cache:
+
+1. `(put! <cache> <args> <value>)`: will put the `<value>` in
+   `<cache>` keyed by `<args>`
+2. `(get <cache> <args>)`: will get the cached value from `<cache>`
+   keyed by `<args>`
+
+`<args>` can be any Clojure object that supports `.toString`.
+
+Caveats when manually using the cache:
+
+1. You are not using any of the automatic, decorated features of the
+   cache - therefore you've got no fallback for instance
+2. Resilience4clj cache internally segments the cache for every
+   function that it decorates and every combination of arguments sent
+   to the function. When used manually, only one "caching space" is
+   used. Therefore, if the same args are used in different places with
+   different semantic meanings you will still get the same values from
+   the cache.
+3. The `put!` and `get` interfaces prefer dealing with `<args>` as a
+   list. If you don send a `seqable?` as `<args>`, whatever parameter
+   you send will be transformed into a list. Therefore (due to the
+   bullet above) sending `:foobar` is equivalent to `'(:foobar)`
+
+See [using the cache as an effect](#using-as-an-effect) for a use case
+where direct manipulation of the cache is very useful.
 
 ## Invalidating the Cache
 
