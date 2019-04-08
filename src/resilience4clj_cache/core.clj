@@ -1,5 +1,5 @@
 (ns resilience4clj-cache.core
-  (:refer-clojure :exclude [reset! get])
+  (:refer-clojure :exclude [reset! get contains?])
 
   (:import (javax.cache Caching
                         Cache
@@ -116,15 +116,26 @@
      (doseq [f (clojure.core/get @listeners evt-type)]
        (f evt-data)))))
 
+(defn ^:private default-metrics []
+  {:hits 0 :misses 0 :errors 0
+   :manual-puts 0 :manual-gets 0})
+
+(defn ^:private inc-metric!
+  [metrics id]
+  (try
+    (swap! metrics update id inc)
+    (catch ArithmeticException _
+      (swap! metrics update id (fn [_] 0)))))
+
 (defn ^:private hit-cache!
   [{:keys [^Cache cache metrics] :as c} fn-name id]
-  (swap! metrics update :hits inc)
+  (inc-metric! metrics :hits)
   (trigger-event c :HIT fn-name id)
   (.get cache id))
 
 (defn ^:private missed-cache!
   [{:keys [^Cache cache metrics] :as c} fn-name id new-value]
-  (swap! metrics update :misses inc)
+  (inc-metric! metrics :misses)
   (.put cache id new-value)
   (trigger-event c :MISSED fn-name id)
   new-value)
@@ -165,10 +176,6 @@
 ;; Public functions
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
-(defn ^:private default-metrics []
-  {:hits 0 :misses 0 :errors 0
-   :manual-puts 0 :manual-gets 0})
-
 (defn create
   ([n]
    (create n nil))
@@ -207,7 +214,7 @@
            (let [new-value (apply f args)]
              (missed-cache! c fn-name id new-value)))
          (catch Throwable t
-           (swap! metrics update :errors inc)
+           (inc-metric! metrics :errors)
            (trigger-event c :ERROR fn-name id {:cause t})
            (let [failure-handler (get-failure-handler opts)
                  args' (-> args (conj {:cause t}))]
@@ -215,7 +222,7 @@
 
 (defn put!
   [{:keys [^Cache cache metrics] :as c} args value]
-  (swap! metrics update :manual-puts inc)
+  (inc-metric! metrics :manual-puts)
   (let [args' (if (not (seqable? args)) (list args) args)
         id (cache-entry-id 'nofn-manual args')
         fn-name (get-fn-name 'nofn-manual)]
@@ -232,7 +239,7 @@
 
 (defn get
   [{:keys [^Cache cache metrics] :as c} args]
-  (swap! metrics update :hits inc)
+  (inc-metric! metrics :manual-gets)
   (let [args' (if (not (seqable? args)) (list args) args)
         id (cache-entry-id 'nofn-manual args')
         fn-name (get-fn-name 'nofn-manual)]
@@ -249,7 +256,7 @@
 
 (defn reset!
   [{:keys [metrics] :as c}]
-  (reset! metrics (default-metrics))
+  (clojure.core/reset! metrics (default-metrics))
   c)
 
 (defn listen-event
@@ -364,7 +371,6 @@
 
 
 (comment
-
 
   (defn hello [n]
     (str "Hello " n "!!"))
