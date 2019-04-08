@@ -265,7 +265,7 @@
                          #{:EXPIRED :HIT :MISSED :MANUAL-PUT :MANUAL-GET :ERROR})
                    :invalid-event-key
                    "event-key must be one of :EXPIRED :HIT :MISSED :MANUAL-PUT :MANUAL-GET :ERROR")
-  (let [coll (get listeners event-key)]
+  (let [coll (clojure.core/get listeners event-key)]
     (if (= :EXPIRED event-key)
       (-> cache
           (.registerCacheEntryListener (build-expired-listener-config f)))
