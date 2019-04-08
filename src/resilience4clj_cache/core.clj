@@ -223,6 +223,13 @@
     (trigger-event c :MANUAL-PUT fn-name id)
     value))
 
+(defn contains?
+  [{:keys [^Cache cache] :as c} args]
+  (let [args' (if (not (seqable? args)) (list args) args)
+        id (cache-entry-id 'nofn-manual args')
+        fn-name (get-fn-name 'nofn-manual)]
+    (.containsKey cache id)))
+
 (defn get
   [{:keys [^Cache cache metrics] :as c} args]
   (swap! metrics update :hits inc)

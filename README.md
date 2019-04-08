@@ -285,12 +285,14 @@ circumstances though you might want to interact directly with its
 cache. One such situation is when [using the cache as an
 effect](#using-as-an-effect).
 
-There are two functions to directly manipulate the cache:
+There are three functions to directly manipulate the cache:
 
 1. `(put! <cache> <args> <value>)`: will put the `<value>` in
    `<cache>` keyed by `<args>`
 2. `(get <cache> <args>)`: will get the cached value from `<cache>`
    keyed by `<args>`
+3. `(contains? <cache> <args>)`: convenience check whether the entry
+   keyed by `<args>` is in the `<cache>`
 
 `<args>` can be any Clojure object that supports `.toString`.
 
