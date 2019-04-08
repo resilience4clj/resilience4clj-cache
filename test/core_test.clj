@@ -217,3 +217,100 @@
            (:manual-gets (c/metrics cache))))
     (c/get cache :a)
     (is (= 0 (:manual-gets (c/metrics cache))))))
+
+(deftest events
+  (let [cache (c/create "my-cache" {:expire-after 1000})
+        cached (c/decorate external-call cache)
+        events (atom [])
+        comp-key (atom "")
+        expire-comp-key (atom "")
+        handler #(swap! events conj %)]
+
+    (doseq [event-type #{:EXPIRED :HIT :MISSED :MANUAL-PUT :MANUAL-GET :ERROR}]
+      (c/listen-event cache event-type handler))
+
+    (dotimes [_ 5] (cached "Foobar"))
+    (dotimes [_ 2] (try (cached "Foobar" {:fail? true}) (catch Throwable _)))
+    (dotimes [_ 3] (c/put! cache :foo :bar))
+    (dotimes [_ 4] (c/get cache :foo))
+    (Thread/sleep 1200)
+    (dotimes [_ 5] (cached "Foobar"))
+
+    (doseq [[i {:keys [event-type
+                       cache-name
+                       creation-time
+                       fn-name
+                       key]
+                :as evt}] (map-indexed vector @events)]
+      (is (= "my-cache" cache-name))
+      (is (instance? java.time.LocalDateTime creation-time))
+      (cond
+        (or (= :HIT event-type)
+            (= :MISSED event-type))
+        (is (= (str external-call) fn-name))
+
+        (or (= :MANUAL-GET event-type)
+            (= :MANUAL-PUT event-type))
+        (is (= "nofn-manual" fn-name)))
+      
+      (cond
+        ;; first one misses
+        (= 0 i)
+        (do
+          (reset! expire-comp-key key)
+          (is (= :MISSED event-type)))
+
+        ;; 4 calls hit
+        (and (>= i 1)
+             (<= i 4))
+        (do
+          (is (= @expire-comp-key key))
+          (is (= :HIT event-type)))
+
+        ;; error has different key (different params)
+        (= 5 i)
+        (reset! comp-key key)
+
+        ;; 2 errors
+        (and (>= i 5)
+             (<= i 6))
+        (do
+          (is (= @comp-key key))
+          (is (= :ERROR event-type)))
+
+        ;; manual will have different key (different parms)
+        (= i 7)
+        (reset! comp-key key)
+
+        ;; 3 manual puts
+        (and (>= i 7)
+             (<= i 9))
+        (do
+          (is (= @comp-key key))
+          (is (= :MANUAL-PUT event-type)))
+
+        ;; 4 manual gets
+        (and (>= i 10)
+             (<= i 13))
+        (do
+          (is (= @comp-key key))
+          (is (= :MANUAL-GET event-type)))
+
+        ;; expired is next
+        (= 14 i)
+        (do
+          (is (= @expire-comp-key key))
+          (is (= :EXPIRED event-type)))
+
+        ;; first one after expired is missed
+        (= 15 i)
+        (do
+          (is (= @expire-comp-key key))
+          (is (= :MISSED event-type)))
+
+        ;; then 4 calls hit
+        (and (>= i 16)
+             (<= i 19))
+        (do
+          (is (= @expire-comp-key key))
+          (is (= :HIT event-type)))))))
