@@ -395,20 +395,29 @@ place, the underlying expression is thrown.
 
 ## Metrics
 
-TBD: get the real metrics
-
-The function `metrics` returns a map with the metrics of the retry:
+The function `metrics` returns a map with the metrics of the cache:
 
 ``` clojure
-(r/metrics my-retry)
+(c/metrics cache)
 
-=> {:number-of-successful-calls-without-retry-attempt 0,
-    :number-of-failed-calls-without-retry-attempt 0,
-    :number-of-successful-calls-with-retry-attempt 0,
-    :number-of-failed-calls-with-retry-attempt 0}
+=> {:hits 0
+    :misses 0
+    :errors 0
+    :manual-puts 0 
+    :manual-gets 0}
 ```
 
-The nodes should be self-explanatory.
+The nodes should be self-explanatory. Because direct manipulation of
+the cache does not go through the automatic hit/miss logic, these are
+kept separatelly.
+
+The metrics can be reset with a call to the `reset!` function:
+
+``` clojure
+(c/reset! cache)
+```
+
+Metrics will cycle back to 0 when they reach `Long/MAX_VALUE`.
 
 ## Events
 

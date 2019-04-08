@@ -158,3 +158,62 @@
         (let [end (/ (double (- (. System (nanoTime)) start)) 1000000.0)]
           (is (> end (* target-end (- 1 error-margin))))
           (is (< end (* target-end (+ 1 error-margin)))))))))
+
+(deftest metrics
+  (let [cache (c/create "my-cache")
+        cached (c/decorate external-call cache)]
+    (is (= {:hits 0
+            :misses 0
+            :errors 0
+            :manual-puts 0
+            :manual-gets 0}
+           (c/metrics cache)))
+    (dotimes [_ 10]
+      (cached "Foobar"))
+    (is (= {:hits 9
+            :misses 1
+            :errors 0
+            :manual-puts 0
+            :manual-gets 0}
+           (c/metrics cache)))
+    (dotimes [_ 5]
+      (try
+        (cached "Foobar" {:fail? true})
+        (catch Throwable _)))
+    (is (= {:hits 9
+            :misses 1
+            :errors 5
+            :manual-puts 0
+            :manual-gets 0}
+           (c/metrics cache)))
+    (dotimes [n 3]
+      (c/put! cache :a n))
+    (dotimes [n 12]
+      (c/get cache :a))
+    (is (= {:hits 9
+            :misses 1
+            :errors 5
+            :manual-puts 3
+            :manual-gets 12}
+           (c/metrics cache)))
+    (c/reset! cache)
+    (is (= {:hits 0
+            :misses 0
+            :errors 0
+            :manual-puts 0
+            :manual-gets 0}
+           (c/metrics cache)))))
+
+(deftest metrics-should-not-overflow
+  (let [cache (c/create "my-cache")
+        cached (c/decorate external-call cache)]
+    ;; this is a tier violation of course
+    ;; but it was the fastest way to test without having to simulate a loop
+    ;; of Long/MAX_VALUE iterations
+    (is (= 0
+           (:manual-gets (c/metrics cache))))
+    (swap! (:metrics cache) update :manual-gets (fn [_] Long/MAX_VALUE))
+    (is (= Long/MAX_VALUE
+           (:manual-gets (c/metrics cache))))
+    (c/get cache :a)
+    (is (= 0 (:manual-gets (c/metrics cache))))))
