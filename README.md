@@ -1,6 +1,6 @@
 [about]: https://github.com/luchiniatwork/resilience4clj-circuitbreaker/blob/master/docs/ABOUT.md
 [breaker]: https://github.com/luchiniatwork/resilience4clj-circuitbreaker/
-[circleci-badge]: https://circleci.com/gh/luchiniatwork/resilience4clj-cache.svg?style=shield&circle-token=
+[circleci-badge]: https://circleci.com/gh/luchiniatwork/resilience4clj-cache.svg?style=shield&circle-token=e366fa2eedef2d2163ec81cc00d315137bc0adb2
 [circleci]: https://circleci.com/gh/luchiniatwork/resilience4clj-cache
 [clojars-badge]: https://img.shields.io/clojars/v/resilience4clj/resilience4clj-cache.svg
 [clojars]: http://clojars.org/resilience4clj/resilience4clj-cache
