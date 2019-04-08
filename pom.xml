@@ -22,9 +22,9 @@
   <packaging>clojure</packaging>
 
   <scm>
-    <connection>scm:git:git@github.com:luchiniatwork/resilience4clj-retry.git</connection>
-    <developerConnection>scm:git:git@github.com:luchiniatwork/resilience4clj-retry.git</developerConnection>
-    <url>https://github.com/luchiniatwork/resilience4clj-retry</url>
+    <connection>scm:git:git@github.com:luchiniatwork/resilience4clj-cache.git</connection>
+    <developerConnection>scm:git:git@github.com:luchiniatwork/resilience4clj-cache.git</developerConnection>
+    <url>https://github.com/luchiniatwork/resilience4clj-cache</url>
   </scm>
 
   <distributionManagement>
