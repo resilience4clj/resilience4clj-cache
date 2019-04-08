@@ -85,9 +85,39 @@
       (is (= "It should say Hello World! but it didn't because of a problem here"
              (decorated "World!" {:fail? true}))))))
 
-#_(deftest expiration-really-works)
+(deftest expiration-really-works
+  (let [cache (c/create "my-cache" {:expire-after 5000})
+        cached (c/decorate external-call cache)
+        error-margin 0.05
+        wait-duration 500]
+    (let [start (. System (nanoTime))
+          target-end (double wait-duration)]
+      (dotimes [_ 30]
+        (is (= "Hello Foobar!" (cached "Foobar" {:wait wait-duration}))))
+      (let [end (/ (double (- (. System (nanoTime)) start)) 1000000.0)]
+        (is (> end (* target-end (- 1 error-margin))))
+        (is (< end (* target-end (+ 1 error-margin))))))
+    (Thread/sleep 5500)
+    (let [start (. System (nanoTime))
+          target-end (double wait-duration)]
+      (dotimes [_ 30]
+        (is (= "Hello Foobar!" (cached "Foobar" {:wait wait-duration}))))
+      (let [end (/ (double (- (. System (nanoTime)) start)) 1000000.0)]
+        (is (> end (* target-end (- 1 error-margin))))
+        (is (< end (* target-end (+ 1 error-margin))))))))
 
-#_(deftest eternal-works)
+(deftest eternal-works
+  (let [cache (c/create "my-cache" {:eternal? true})
+        cached (c/decorate external-call cache)
+        error-margin 0.20
+        wait-duration 1000]
+    (let [start (. System (nanoTime))
+          target-end (double wait-duration)]
+      (dotimes [_ 1000]
+        (is (= "Hello Foobar!" (cached "Foobar" {:wait wait-duration}))))
+      (let [end (/ (double (- (. System (nanoTime)) start)) 1000000.0)]
+        (is (> end (* target-end (- 1 error-margin))))
+        (is (< end (* target-end (+ 1 error-margin))))))))
 
 (deftest direct-manipulation
   (let [cache (c/create "my-cache")
