@@ -22,5 +22,6 @@
   :test
   {:extra-paths ["test"]
    :extra-deps
-   {lambdaisland/kaocha {:mvn/version "0.0-413"}}
+   {lambdaisland/kaocha                   {:mvn/version "0.0-413"}
+    org.infinispan/infinispan-embedded    {:mvn/version "9.1.7.Final"}}
    :main-opts ["-m" "kaocha.runner"]}}}

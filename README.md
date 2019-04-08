@@ -209,6 +209,18 @@ Here is an example creating a cache that expires in a minute:
 (def cache (c/create {:expire-after 60000}))
 ```
 
+The function `config` returns the configuration of a cache in case
+you need to inspect it. Example:
+
+``` clojure
+(c/config cache)
+=> {:provider-fn #object[resilience4clj-cache.core$get-provider...
+    :manager-fn #object[resilience4clj-cache.core$get-manager...
+    :config-fn #object[resilience4clj-cache.core$get-config...
+    :eternal? true
+    :expire-after nil}
+```
+
 ## Fallback Strategies
 
 TBD: mostly it should be ok... just double check (particularly param

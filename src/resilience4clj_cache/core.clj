@@ -52,22 +52,38 @@
   [assertion? category msg]
   (when (not assertion?) (anomaly! category msg)))
 
-;; FIXME reconsider whether making eternal? by default is a good idea
+(defn ^:private is-eternal?
+  [{:keys [provider-fn manager-fn config-fn expire-after eternal?]}]
+  (if (or provider-fn manager-fn config-fn)
+    nil
+    (if eternal?
+      true
+      (if expire-after false true))))
+
+(defn ^:private get-expire-after
+  [{:keys [provider-fn manager-fn config-fn expire-after eternal?] :as opts}]
+  (if (or provider-fn manager-fn config-fn)
+    nil
+    (do
+      (when expire-after
+        (assert-anomaly! (>= expire-after 1000)
+                         :invalid-expire-after
+                         ":expire-after must be at least 1000"))
+      (if (not (is-eternal? opts))
+        (or expire-after 60000)
+        nil))))
+
 (defn ^:private get-expiry-policy
-  [{:keys [expire-after eternal?]}]
-  (when expire-after
-    (assert-anomaly! (>= expire-after 1000)
-                     :invalid-expire-after
-                     ":expire-after must be at least 1000"))
-  (let [expire-after' (or expire-after 60000)]
-    (if (or eternal? (and (nil? eternal?) (nil? expire-after)))
-      (reify Factory
-        (create [_]
-          (EternalExpiryPolicy.)))
+  [opts]
+  (if (is-eternal? opts)
+    (reify Factory
+      (create [_]
+        (EternalExpiryPolicy.)))
+    (let [expire-after (get-expire-after opts)]
       (reify Factory
         (create [_]
           (ModifiedExpiryPolicy. (Duration. TimeUnit/MILLISECONDS
-                                            ^long expire-after')))))))
+                                            ^long expire-after)))))))
 
 (defn ^:private get-fn-name
   [f]
@@ -167,18 +183,15 @@
      {:metrics (atom (default-metrics))
       :listeners (atom {})
       :cache (.createCache manager n config)
-      :config config})))
+      :config {:provider-fn provider-fn
+               :manager-fn manager-fn
+               :config-fn config-fn
+               :eternal? (is-eternal? opts)
+               :expire-after (get-expire-after opts)}})))
 
 (defn config
-  [{:keys [^MutableConfiguration config]}]
-  (let [expiry-policy (-> config
-                          .getExpiryPolicyFactory
-                          .create)]
-    (if (instance? EternalExpiryPolicy expiry-policy)
-      {:eternal? true}
-      {:expire-after (-> ^EternalExpiryPolicy expiry-policy
-                         .getExpiryForUpdate
-                         .getDurationAmount)})))
+  [{:keys [config]}]
+  config)
 
 (defn decorate
   ([f cache]
