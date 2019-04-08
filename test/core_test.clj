@@ -123,11 +123,24 @@
   (let [cache (c/create "my-cache")
         r1 (rand)
         r2 (rand)]
+
+    (is (not (c/contains? cache :foo)))
+    (is (not (c/contains? cache '(:foo))))
     (c/put! cache :foo r2)
+    (is (= r2 (c/get cache :foo)))
+    (is (= r2 (c/get cache '(:foo))))
+    (is (c/contains? cache :foo))
+    (is (c/contains? cache '(:foo)))
+
     (c/put! cache :foo r1)
-    (c/put! cache [:foo :bar] (* r1 r2))
     (is (= r1 (c/get cache :foo)))
     (is (= r1 (c/get cache '(:foo))))
+    (is (c/contains? cache :foo))
+    (is (c/contains? cache '(:foo)))
+
+    (is (not (c/contains? cache [:foo :bar])))
+    (c/put! cache [:foo :bar] (* r1 r2))
+    (is (c/contains? cache [:foo :bar]))
     (is (= (* r1 r2) (c/get cache [:foo :bar])))))
 
 (deftest cache-invalidation
