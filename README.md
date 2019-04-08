@@ -314,7 +314,16 @@ where direct manipulation of the cache is very useful.
 
 ## Invalidating the Cache
 
-TBD
+By default Resilience4clj cache uses an eternal cache (this can be
+[set up differently if you want](#cache-settings)) therefore, you
+might eventually want to invalidate the cache altogether.
+
+In order to do so, use the function `invalidate!`. In the following
+code, the `cache` will be invalidated:
+
+``` clojure
+(c/invalidate! cache)
+```
 
 ## Using as an Effect
 

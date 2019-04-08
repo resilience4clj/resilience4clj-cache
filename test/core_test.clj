@@ -88,7 +88,7 @@
 (deftest expiration-really-works
   (let [cache (c/create "my-cache" {:expire-after 5000})
         cached (c/decorate external-call cache)
-        error-margin 0.05
+        error-margin 0.10
         wait-duration 500]
     (let [start (. System (nanoTime))
           target-end (double wait-duration)]
@@ -113,7 +113,7 @@
         wait-duration 1000]
     (let [start (. System (nanoTime))
           target-end (double wait-duration)]
-      (dotimes [_ 1000]
+      (dotimes [_ 100]
         (is (= "Hello Foobar!" (cached "Foobar" {:wait wait-duration}))))
       (let [end (/ (double (- (. System (nanoTime)) start)) 1000000.0)]
         (is (> end (* target-end (- 1 error-margin))))
@@ -129,3 +129,19 @@
     (is (= r1 (c/get cache :foo)))
     (is (= r1 (c/get cache '(:foo))))
     (is (= (* r1 r2) (c/get cache [:foo :bar])))))
+
+(deftest cache-invalidation
+  (let [cache (c/create "my-cache" {:eternal? true})
+        cached (c/decorate external-call cache)
+        error-margin 0.10
+        wait-duration 200]
+    (dotimes [n 2]
+      (when (= 1 n)
+        (c/invalidate! cache))
+      (let [start (. System (nanoTime))
+            target-end (double wait-duration)]
+        (dotimes [_ 10]
+          (is (= "Hello Foobar!" (cached "Foobar" {:wait wait-duration}))))
+        (let [end (/ (double (- (. System (nanoTime)) start)) 1000000.0)]
+          (is (> end (* target-end (- 1 error-margin))))
+          (is (< end (* target-end (+ 1 error-margin)))))))))
