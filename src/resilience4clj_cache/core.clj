@@ -1,5 +1,6 @@
 (ns resilience4clj-cache.core
-  (:refer-clojure :exclude [reset!])
+  (:refer-clojure :exclude [reset! get])
+
   (:import (javax.cache Caching
                         Cache
                         CacheManager)
@@ -112,7 +113,7 @@
                           :key k
                           :creation-time (LocalDateTime/now)}
                          opts)]
-     (doseq [f (get @listeners evt-type)]
+     (doseq [f (clojure.core/get @listeners evt-type)]
        (f evt-data)))))
 
 (defn ^:private hit-cache!
@@ -215,17 +216,17 @@
 (defn put!
   [{:keys [^Cache cache metrics] :as c} args value]
   (swap! metrics update :manual-puts inc)
-  (let [args' (if (not (seqable? args)) [args] args)
+  (let [args' (if (not (seqable? args)) (list args) args)
         id (cache-entry-id 'nofn-manual args')
         fn-name (get-fn-name 'nofn-manual)]
     (.put cache id value)
     (trigger-event c :MANUAL-PUT fn-name id)
     value))
 
-(defn get!
+(defn get
   [{:keys [^Cache cache metrics] :as c} args]
   (swap! metrics update :hits inc)
-  (let [args' (if (not (seqable? args)) [args] args)
+  (let [args' (if (not (seqable? args)) (list args) args)
         id (cache-entry-id 'nofn-manual args')
         fn-name (get-fn-name 'nofn-manual)]
     (trigger-event c :MANUAL-GET fn-name id)
@@ -340,7 +341,7 @@
   (metrics cache)
 
   (put! cache :a "12")
-  (get! cache :a)
+  (get cache :a)
   
 
   ;; these tests don work because the cache invalidation happens at the

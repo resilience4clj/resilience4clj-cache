@@ -63,3 +63,39 @@
     (is (= provider provider-fn))
     (is (= manager manager-fn))
     (is (= config config-fn))))
+
+(deftest fallback-function
+  (testing "non fallback option"
+    (let [cache (c/create "my-cache")
+          decorated (c/decorate external-call cache)]
+      (is (thrown? Throwable (decorated "World!" {:fail? true})))
+      (try
+        (decorated "World!" {:fail? true})
+        (catch Throwable e
+          (is (= :here
+                 (-> e ex-data :extra-info)))))))
+
+  (testing "with fallback option"
+    (let [fallback-fn (fn [{:keys [cause]} n opts]
+                        (str "It should say Hello " n " but it didn't "
+                             "because of a problem " (-> cause ex-data :extra-info name)))
+          cache (c/create "my-cache")
+          decorated (c/decorate external-call cache
+                                {:fallback fallback-fn})]
+      (is (= "It should say Hello World! but it didn't because of a problem here"
+             (decorated "World!" {:fail? true}))))))
+
+#_(deftest expiration-really-works)
+
+#_(deftest eternal-works)
+
+(deftest direct-manipulation
+  (let [cache (c/create "my-cache")
+        r1 (rand)
+        r2 (rand)]
+    (c/put! cache :foo r2)
+    (c/put! cache :foo r1)
+    (c/put! cache [:foo :bar] (* r1 r2))
+    (is (= r1 (c/get cache :foo)))
+    (is (= r1 (c/get cache '(:foo))))
+    (is (= (* r1 r2) (c/get cache [:foo :bar])))))
