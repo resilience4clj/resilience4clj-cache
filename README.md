@@ -395,23 +395,199 @@ place, the underlying expression is thrown.
 
 By combining several modules from Resilience4clj (see [the list
 here][about]) you can achieve very advanced behavior quickly. For
-instance:
+instance, let's say that we have the same flaky `hello` function:
+
+``` clojure
+(defn hello [person]
+  ;; hypothetical flaky, external HTTP request
+  (str "Hello " person "!!"))
+```
+
+We want to make sure that it is retried 5 times with a waiting time of
+200ms between calls:
+
+``` clojure
+(def retry (r/create "hello-retry" {:max-attempts 5
+                                    :wait-duration 200}))
+```
+
+We also want to give it a "time budget" of 250ms. If we don't have a
+reply in 250ms, we need to back out.
+
+``` clojure
+(def timelimiter (tl/create {:timeout-duration 250
+                             :cancel-running-future? false}))
+```
+
+Notice that we chose to tell the limiter not to cancel the separate
+thread where the retry is going to run (`:cancel-running-future?` as
+`false`). This is because we will still want the retry to run on the
+side in order to persist any data it captures to the cache (we will
+get there).
+
+Let's move on to our cache. Let's create a cache that lasts for 2
+hours (120,000ms):
+
+``` clojure
+(def cache (c/create "hello-cache" {:expire-after 120000}))
+```
+
+Let's also make sure we have a side-effect function that will be able
+to put responses in the cache:
+
+``` clojure
+(defn effect-fn
+  [ret & args]
+  (c/put! cache args ret))
+```
+
+We need the reverse of the side-effect: fallback function that will be
+able to get the cached value when available or simply fail throuh:
+
+``` clojure
+(defn fallback-fn
+  [e person]
+  (if (c/contains? cache person)
+    (c/get cache person)
+    (throw e)))
+```
+
+At last, let's create a circuit breaker. For the sake of this example
+let's keep it with the default settings:
+
+``` clojure
+(def breaker (cb/create "hello-breaker"))
+```
+
+Let's now start to wrap our `hello` function. Let's first do the
+`retry`. Notice that we are using our side-effect function `effect-fn`
+which will effectively save the successful return on the cache, and
+our fallback function `fallback-fn` that will return from the cache in
+case of failure or the retries have been exhausted (if the entry is
+present on the cache):
+
+``` clojure
+(def very-safe-hello
+  (-> hello
+      (r/decorate retry {:effect effect-fn
+                         :fallback fallback-fn})))
+```
+
+As is, our `very-safe-hello` function still has a problem: it might
+take a long while to finish. Remember, we've set our `retry` in such a
+way that it retries for 5 times and 200ms of waiting between calls.
+Additionally, we don't know how much time the `hello` call and its
+flaky HTTP will take. If the timeout of that call is 30s, our
+`very-safe-hello` can take 150,800ms or more than 2.5 minutes.
+
+That's the reason why we should use our time limiter:
+
+``` clojure
+ (def very-safe-hello
+  (-> hello
+      (r/decorate retry {:effect effect-fn
+                         :fallback fallback-fn})
+      (tl/decorate timelimiter {:fallback fallback-fn})))
+```
+
+As you remember, our `timelimiter` had a "budget" of 250ms so
+`very-safe-hello` now will return (or throw) in 250ms or less. A nice
+touch to our `timelimiter` as well is that it will not cancel the
+thread where the `retry` is running. Therefore, your calling thread
+will be freed but your original request will continue to be retried
+until it succeeds or the max attempts is reached.
+
+Notice that we recycled our fallback function too. In case the
+`timelimiter` gives up waiting the `retry` to finish it will look for
+a cached version of the return.
+
+So far, our `very-safe-hello` is already much better than simply
+calling `hello`. But we can do better. For instance, with so far we
+are caching when succesful and returning from the cache in case of
+failure. What if we simply want to take it from the cache before even
+attempting to retrieve it? We simply wrap our function again with our
+`cache`:
 
 ``` clojure
 (def very-safe-hello
   (-> hello
       (r/decorate retry {:effect effect-fn
                          :fallback fallback-fn})
-      (tl/decorate timelimiter)
-      (cb/decorate breaker)))
+      (tl/decorate timelimiter {:fallback fallback-fn})
+      (c/decorate cache)))
+```
+
+This will make our call much better, faster, and safer than before.
+
+However, we can still make it better by wrapping it with our circuit
+breaker:
+
+``` clojure
+(def very-safe-hello
+  (-> hello
+      (r/decorate retry {:effect effect-fn
+                         :fallback fallback-fn})
+      (tl/decorate timelimiter {:fallback fallback-fn})
+      (c/decorate cache)
+      (cb/decorate breaker {:fallback fallback-fn})))
+```
+
+The role of the circuit breaker here is an extra level of encompassing
+safety. It will make sure that if anything goes wrong with the inner
+calls, it will mark this route as a possible broken route.
+
+In case of the specified failure rate threshold being met (50% by
+default) this specific call stack will be blocked (in circuit breaker
+parlor, the breaker is open). The breaker will be open for a while (by
+default, 1 minute). This will give the external system a respite to
+recover and while at the same time not blocking your consumer code.
+
+We also recycled our fallback funtion in our breaker decoration.
+
+Here's the whole code for this section in one place:
+
+``` clojure
+(defn hello [person]
+  ;; hypothetical flaky, external HTTP request
+  (str "Hello " person "!!"))
+
+(def retry (r/create "hello-retry" {:max-attempts 5
+                                    :wait-duration 200}))
+
+(def timelimiter (tl/create {:timeout-duration 250
+                             :cancel-running-future? false}))
+
+
+(def cache (c/create "hello-cache" {:expire-after 120000}))
+
+(def breaker (cb/create "hello-breaker"))
+
+(defn effect-fn
+  [ret & args]
+  (c/put! cache args ret))
+
+(defn fallback-fn
+  [e person]
+  (if (c/contains? cache person)
+    (c/get cache person)
+    (throw e)))
+
+(def very-safe-hello
+  (-> hello
+      (r/decorate retry {:effect effect-fn
+                         :fallback fallback-fn})
+      (tl/decorate timelimiter {:fallback fallback-fn})
+      (c/decorate cache)
+      (cb/decorate breaker {:fallback fallback-fn})))
 ```
 
 With the snippet above, you are retrying `hello` in case of failure,
 caching its return when succesful, having a cached fallback strategy,
-within a pre-defined time limit (execution budget) and protected by a
+making sure the whole stack returns within a pre-defined time limit
+(execution budget), given a very convenient cache, and protected by a
 ring-based circuit breaker.
 
-All that in just 5 lines.
+All that in just a couple of lines.
 
 ## Metrics
 
