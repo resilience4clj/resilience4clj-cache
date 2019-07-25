@@ -1,8 +1,8 @@
 {:paths ["src"]
  
  :deps
- {org.clojure/clojure                       {:mvn/version "1.10.0"}
-  javax.cache/cache-api                     {:mvn/version "1.1.0"}}
+ {org.clojure/clojure                       {:mvn/version "1.10.1"}
+  javax.cache/cache-api                     {:mvn/version "1.1.1"}}
 
  :aliases
  {:cache2k
@@ -22,6 +22,6 @@
   :test
   {:extra-paths ["test"]
    :extra-deps
-   {lambdaisland/kaocha                   {:mvn/version "0.0-413"}
+   {lambdaisland/kaocha                   {:mvn/version "0.0-529"}
     org.infinispan/infinispan-embedded    {:mvn/version "9.1.7.Final"}}
    :main-opts ["-m" "kaocha.runner"]}}}
